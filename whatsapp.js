@@ -18,6 +18,24 @@ const FILES_DIR = path.join(__dirname, "files");
 const clients = {};
 // Stores QR codes for sessions pending authentication, keyed by session ID.
 const qrCodes = {};
+// Tracks scheduled init retries per session to avoid duplicate timers.
+const initRetryTimers = {};
+const MAX_INIT_RETRIES = 3;
+
+/**
+ * Returns true when an init error is likely transient and worth retrying.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isRetryableInitError(error) {
+  const message = String(error?.message || "");
+  return (
+    /Execution context was destroyed/i.test(message) ||
+    /Target closed/i.test(message) ||
+    /Session closed/i.test(message) ||
+    /Navigation failed because browser has disconnected/i.test(message)
+  );
+}
 
 /**
  * Starts a new WhatsApp session.
@@ -46,6 +64,7 @@ function startSession(sessionId) {
   });
 
   clients[sessionId] = client;
+  let initAttempts = 0;
 
   // Watchdog to detect if the browser handshake hangs.
   let watchdog = setTimeout(async () => {
@@ -388,9 +407,40 @@ function startSession(sessionId) {
     );
   });
 
-  client
-    .initialize()
-    .catch((err) => console.error(`[${sessionId}] Init error:`, err));
+  const tryInitialize = () => {
+    client.initialize().catch(async (err) => {
+      clearTimeout(watchdog);
+      console.error(`[${sessionId}] Init error:`, err);
+
+      try {
+        await client.destroy();
+      } catch {
+        // no-op
+      }
+
+      if (clients[sessionId] === client) {
+        delete clients[sessionId];
+      }
+
+      if (
+        isRetryableInitError(err) &&
+        initAttempts < MAX_INIT_RETRIES &&
+        !initRetryTimers[sessionId]
+      ) {
+        initAttempts += 1;
+        const delayMs = initAttempts * 2000;
+        console.warn(
+          `[${sessionId}] Retrying initialization (${initAttempts}/${MAX_INIT_RETRIES}) in ${delayMs}ms...`,
+        );
+        initRetryTimers[sessionId] = setTimeout(() => {
+          delete initRetryTimers[sessionId];
+          startSession(sessionId);
+        }, delayMs);
+      }
+    });
+  };
+
+  tryInitialize();
 
   return true;
 }
@@ -449,6 +499,10 @@ async function stopSession(sessionId) {
 
   delete clients[sessionId];
   delete qrCodes[sessionId];
+  if (initRetryTimers[sessionId]) {
+    clearTimeout(initRetryTimers[sessionId]);
+    delete initRetryTimers[sessionId];
+  }
   return true;
 }
 
