@@ -17,19 +17,12 @@ app.use(express.json());
 const FILES_DIR = path.join(__dirname, "files");
 const SESSIONS_DIR = path.join(__dirname, "sessions");
 const PORT = process.env.PORT || 3000;
+const RESTORE_DELAY_MS = 8000;
 
 // --- Directory Initialization ---
 // Ensure persistent storage directories exist.
 if (!fs.existsSync(FILES_DIR)) fs.mkdirSync(FILES_DIR);
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
-
-// --- Session Restore ---
-// Auto-restore persisted WhatsApp sessions so /web-start is not required
-// after every container restart.
-const { restored } = restorePersistedSessions();
-if (restored.length > 0) {
-  console.log(`♻️ Restoring persisted sessions: ${restored.join(", ")}`);
-}
 
 // --- Static File Server ---
 // Serve media files publicly from the 'files' directory.
@@ -44,3 +37,12 @@ app.use(routes);
 app.listen(PORT, "0.0.0.0", () =>
   console.log(`🚀 API Service listening on port ${PORT}`),
 );
+
+// --- Session Restore ---
+// Delay restore slightly after boot to reduce Chromium/Puppeteer startup races.
+setTimeout(() => {
+  const { restored } = restorePersistedSessions();
+  if (restored.length > 0) {
+    console.log(`♻️ Restoring persisted sessions: ${restored.join(", ")}`);
+  }
+}, RESTORE_DELAY_MS);

@@ -20,6 +20,8 @@ const clients = {};
 const qrCodes = {};
 // Tracks scheduled init retries per session to avoid duplicate timers.
 const initRetryTimers = {};
+// Tracks how many init retries have been attempted per session.
+const initRetryCounts = {};
 const MAX_INIT_RETRIES = 3;
 
 /**
@@ -41,10 +43,15 @@ function isRetryableInitError(error) {
  * Starts a new WhatsApp session.
  * This involves creating a client, setting up event listeners, and initializing the connection.
  * @param {string} sessionId - A unique identifier for the session.
+ * @param {{preserveRetryCount?: boolean}} [options] - Optional startup flags.
  * @returns {boolean} True if the session initialization started, false if the session already exists.
  */
-function startSession(sessionId) {
+function startSession(sessionId, options = {}) {
+  const { preserveRetryCount = false } = options;
   if (clients[sessionId]) return false;
+  if (!preserveRetryCount) {
+    delete initRetryCounts[sessionId];
+  }
 
   const client = new Client({
     authStrategy: new LocalAuth({
@@ -64,8 +71,6 @@ function startSession(sessionId) {
   });
 
   clients[sessionId] = client;
-  let initAttempts = 0;
-
   // Watchdog to detect if the browser handshake hangs.
   let watchdog = setTimeout(async () => {
     const state = await client.getState().catch(() => null);
@@ -86,6 +91,11 @@ function startSession(sessionId) {
   client.on("ready", () => {
     clearTimeout(watchdog);
     delete qrCodes[sessionId];
+    if (initRetryTimers[sessionId]) {
+      clearTimeout(initRetryTimers[sessionId]);
+      delete initRetryTimers[sessionId];
+    }
+    delete initRetryCounts[sessionId];
     console.log(`✅ [${sessionId}] WhatsApp is Ready`);
     postWebhook({
       event: "session",
@@ -422,20 +432,21 @@ function startSession(sessionId) {
         delete clients[sessionId];
       }
 
-      if (
-        isRetryableInitError(err) &&
-        initAttempts < MAX_INIT_RETRIES &&
-        !initRetryTimers[sessionId]
-      ) {
-        initAttempts += 1;
-        const delayMs = initAttempts * 2000;
+      const nextAttempt = (initRetryCounts[sessionId] || 0) + 1;
+      if (isRetryableInitError(err) && nextAttempt <= MAX_INIT_RETRIES) {
+        initRetryCounts[sessionId] = nextAttempt;
+        const delayMs = nextAttempt * 2000;
         console.warn(
-          `[${sessionId}] Retrying initialization (${initAttempts}/${MAX_INIT_RETRIES}) in ${delayMs}ms...`,
+          `[${sessionId}] Retrying initialization (${nextAttempt}/${MAX_INIT_RETRIES}) in ${delayMs}ms...`,
         );
-        initRetryTimers[sessionId] = setTimeout(() => {
-          delete initRetryTimers[sessionId];
-          startSession(sessionId);
-        }, delayMs);
+        if (!initRetryTimers[sessionId]) {
+          initRetryTimers[sessionId] = setTimeout(() => {
+            delete initRetryTimers[sessionId];
+            startSession(sessionId, { preserveRetryCount: true });
+          }, delayMs);
+        }
+      } else {
+        delete initRetryCounts[sessionId];
       }
     });
   };
@@ -459,7 +470,8 @@ function restorePersistedSessions() {
   const persistedIds = entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .map((name) => (name.startsWith("session-") ? name.slice(8) : name))
+    .filter((name) => name.startsWith("session-"))
+    .map((name) => name.slice(8))
     .map((id) => id.trim())
     .filter(Boolean);
 
@@ -480,8 +492,15 @@ function restorePersistedSessions() {
  * @returns {Promise<boolean>} True if the session was stopped, false if it was not found.
  */
 async function stopSession(sessionId) {
+  const hadPendingRetry = Boolean(initRetryTimers[sessionId]);
+  if (hadPendingRetry) {
+    clearTimeout(initRetryTimers[sessionId]);
+    delete initRetryTimers[sessionId];
+  }
+  delete initRetryCounts[sessionId];
+
   const client = clients[sessionId];
-  if (!client) return false;
+  if (!client) return hadPendingRetry;
 
   try {
     await client.logout();
@@ -499,10 +518,6 @@ async function stopSession(sessionId) {
 
   delete clients[sessionId];
   delete qrCodes[sessionId];
-  if (initRetryTimers[sessionId]) {
-    clearTimeout(initRetryTimers[sessionId]);
-    delete initRetryTimers[sessionId];
-  }
   return true;
 }
 
@@ -589,17 +604,21 @@ async function buildRecipientCandidates(client, to) {
 }
 
 /**
- * True when WhatsApp reports the LID-chat-table lookup failure.
+ * True when WhatsApp fails to resolve a candidate destination ID.
+ * In these cases, trying the next candidate ID shape is usually correct.
  * @param {unknown} error
  * @returns {boolean}
  */
-function isLidChatLookupError(error) {
+function isRetryableDestinationError(error) {
   const message = String(error?.message || "");
-  return /lid is missing in chat table/i.test(message);
+  return (
+    /lid is missing in chat table/i.test(message) ||
+    /cannot read properties of undefined \(reading 'getchat'\)/i.test(message)
+  );
 }
 
 /**
- * Sends to a recipient with ID fallback behavior for LID-related failures.
+ * Sends to a recipient with ID fallback behavior for destination lookup failures.
  * @param {Client} client - Active WhatsApp client instance.
  * @param {string} to - Destination from API request.
  * @param {(chatId: string) => Promise<void>} sendFn - Send function for text/media.
@@ -618,7 +637,7 @@ async function sendWithRecipientFallback(client, to, sendFn) {
       return;
     } catch (error) {
       lastError = error;
-      if (!isLidChatLookupError(error) || i === candidates.length - 1) {
+      if (!isRetryableDestinationError(error) || i === candidates.length - 1) {
         throw error;
       }
     }

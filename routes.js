@@ -58,18 +58,14 @@ router.get("/web-start/:id", (req, res) => {
  * @returns {string} A confirmation message.
  * 200: Session stopped.
  * 404: Session not found.
- * 500: Failed to stop session.
  */
 router.get("/web-stop/:id", async (req, res) => {
   const sessionId = req.params.id;
-  if (!getSession(sessionId)) {
-    return res.status(404).send(`Session ${sessionId} not found.`);
-  }
   const stopped = await stopSession(sessionId);
   if (stopped) {
     res.send(`Session ${sessionId} has been stopped.`);
   } else {
-    res.status(500).send(`Failed to stop session ${sessionId}.`);
+    res.status(404).send(`Session ${sessionId} not found.`);
   }
 });
 
