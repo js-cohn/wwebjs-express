@@ -5,6 +5,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const routes = require("./routes");
+const { restorePersistedSessions } = require("./whatsapp");
 
 const app = express();
 
@@ -21,6 +22,14 @@ const PORT = process.env.PORT || 3000;
 // Ensure persistent storage directories exist.
 if (!fs.existsSync(FILES_DIR)) fs.mkdirSync(FILES_DIR);
 if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR);
+
+// --- Session Restore ---
+// Auto-restore persisted WhatsApp sessions so /web-start is not required
+// after every container restart.
+const { restored } = restorePersistedSessions();
+if (restored.length > 0) {
+  console.log(`♻️ Restoring persisted sessions: ${restored.join(", ")}`);
+}
 
 // --- Static File Server ---
 // Serve media files publicly from the 'files' directory.

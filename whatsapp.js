@@ -396,6 +396,35 @@ function startSession(sessionId) {
 }
 
 /**
+ * Restores persisted LocalAuth sessions from disk at process startup.
+ * LocalAuth stores session data under directories like `session-<id>`.
+ * @returns {{restored: string[], skipped: string[]}} Restored and skipped IDs.
+ */
+function restorePersistedSessions() {
+  if (!fs.existsSync(SESSIONS_DIR)) {
+    return { restored: [], skipped: [] };
+  }
+
+  const entries = fs.readdirSync(SESSIONS_DIR, { withFileTypes: true });
+  const persistedIds = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .map((name) => (name.startsWith("session-") ? name.slice(8) : name))
+    .map((id) => id.trim())
+    .filter(Boolean);
+
+  const restored = [];
+  const skipped = [];
+  for (const sessionId of [...new Set(persistedIds)]) {
+    const started = startSession(sessionId);
+    if (started) restored.push(sessionId);
+    else skipped.push(sessionId);
+  }
+
+  return { restored, skipped };
+}
+
+/**
  * Stops a WhatsApp session, logs out, and cleans up resources.
  * @param {string} sessionId - The ID of the session to stop.
  * @returns {Promise<boolean>} True if the session was stopped, false if it was not found.
@@ -455,6 +484,96 @@ async function getSessionStats() {
 }
 
 /**
+ * Builds candidate chat IDs for a recipient.
+ * Uses getNumberId when possible so WhatsApp chooses the correct ID type (e.g. @lid).
+ * @param {Client} client - Active WhatsApp client instance.
+ * @param {string} to - Destination from API request.
+ * @returns {Promise<string[]>} Ordered unique candidate chat IDs.
+ */
+async function buildRecipientCandidates(client, to) {
+  const raw = String(to || "").trim();
+  const explicitId = raw.includes("@") ? raw : null;
+
+  let numeric = null;
+  if (explicitId) {
+    const [user, server] = explicitId.split("@");
+    if (
+      /^\d+$/.test(user || "") &&
+      ["c.us", "s.whatsapp.net", "lid"].includes(server)
+    ) {
+      numeric = user;
+    }
+  } else {
+    const digits = raw.replace(/\D/g, "");
+    numeric = digits || null;
+  }
+
+  const candidates = [];
+  if (numeric) {
+    const numberId = await client.getNumberId(numeric).catch(() => null);
+    const resolvedId =
+      numberId?._serialized ||
+      (numberId?.user && numberId?.server
+        ? `${numberId.user}@${numberId.server}`
+        : null);
+    if (resolvedId) candidates.push(resolvedId);
+  }
+
+  if (explicitId) {
+    candidates.push(explicitId);
+  } else if (numeric) {
+    candidates.push(`${numeric}@c.us`);
+  }
+
+  // Fallback pair for direct contacts only; used if WhatsApp rejects one ID type.
+  if (numeric) {
+    candidates.push(`${numeric}@c.us`);
+    candidates.push(`${numeric}@lid`);
+  }
+
+  return [...new Set(candidates)];
+}
+
+/**
+ * True when WhatsApp reports the LID-chat-table lookup failure.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isLidChatLookupError(error) {
+  const message = String(error?.message || "");
+  return /lid is missing in chat table/i.test(message);
+}
+
+/**
+ * Sends to a recipient with ID fallback behavior for LID-related failures.
+ * @param {Client} client - Active WhatsApp client instance.
+ * @param {string} to - Destination from API request.
+ * @param {(chatId: string) => Promise<void>} sendFn - Send function for text/media.
+ */
+async function sendWithRecipientFallback(client, to, sendFn) {
+  const candidates = await buildRecipientCandidates(client, to);
+  if (!candidates.length) {
+    throw new Error("Invalid destination");
+  }
+
+  let lastError = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const chatId = candidates[i];
+    try {
+      await sendFn(chatId);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isLidChatLookupError(error) || i === candidates.length - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError || new Error("Failed to resolve destination");
+}
+
+/**
  * Sends a text message.
  * @param {string} sessionId - The session to use.
  * @param {string} to - The recipient's ID (e.g., "1234567890" or "1234567890@c.us").
@@ -465,8 +584,9 @@ async function sendMessage(sessionId, to, text) {
   const client = getSession(sessionId);
   if (!client) throw new Error("Session not active");
 
-  const chatId = to.includes("@") ? to : `${to}@c.us`;
-  await client.sendMessage(chatId, text);
+  await sendWithRecipientFallback(client, to, async (chatId) => {
+    await client.sendMessage(chatId, text);
+  });
   return true;
 }
 
@@ -497,18 +617,20 @@ async function sendFile(
     inferredName,
   );
 
-  const chatId = to.includes("@") ? to : `${to}@c.us`;
   const safeCaption = typeof caption === "string" ? caption : "";
   // Always send as a document to preserve file type and name.
-  await client.sendMessage(chatId, media, {
-    sendMediaAsDocument: true,
-    caption: safeCaption,
+  await sendWithRecipientFallback(client, to, async (chatId) => {
+    await client.sendMessage(chatId, media, {
+      sendMediaAsDocument: true,
+      caption: safeCaption,
+    });
   });
   return true;
 }
 
 module.exports = {
   startSession,
+  restorePersistedSessions,
   stopSession,
   getSession,
   getQrCode,
