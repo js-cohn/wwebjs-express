@@ -1,0 +1,7 @@
+services:
+  wwebjs-api:
+    volumes:
+      - ${WWEBJS_ROOT:-.}/index.js:/app/index.js
+      - ${WWEBJS_ROOT:-.}/routes.js:/app/routes.js
+      - ${WWEBJS_ROOT:-.}/utils.js:/app/utils.js
+      - ${WWEBJS_ROOT:-.}/whatsapp.js:/app/whatsapp.js
