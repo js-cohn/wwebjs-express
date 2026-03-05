@@ -1,6 +1,6 @@
 # wwebjs-express
 
-Lightweight Express API for `whatsapp-web.js`, designed to run behind Caddy.
+Express API for `whatsapp-web.js`, intended to run behind Caddy.
 
 ## Prerequisites
 
@@ -8,146 +8,221 @@ Lightweight Express API for `whatsapp-web.js`, designed to run behind Caddy.
 - Caddy with `caddy-ratelimit`
 
 Build Caddy with:
+
 ```bash
-xcaddy build --with https://github.com/mholt/caddy-ratelimit
+xcaddy build --with github.com/mholt/caddy-ratelimit
 ```
 
 ## Setup
 
-1. Create `.env` from the template:
+1. Create your env file:
+
 ```bash
 cp .env.example .env
 ```
 
-2. Generate credentials:
+2. Generate secrets:
+
 ```bash
-# API key
+# API key (for /send-* endpoints)
 openssl rand -hex 32
 
-# Basic auth hash for Caddy
+# Basic auth hash (for /web-* endpoints)
 caddy hash-password --plaintext 'your_password'
 # or: docker run --rm caddy:2 caddy hash-password --plaintext 'your_password'
 ```
 
-3. Fill `.env` values.
-If using Caddy placeholders in `Caddyfile`, set at least:
+3. Update `.env`.
+
+Minimum values you should set:
+
 - `DOMAIN`
 - `PORT`
+- `WEBHOOK_URL`
 - `API_KEY`
 - `BASIC_AUTH_USER`
 - `BASIC_AUTH_HASH`
+- `WHISPER_MODEL` (optional, defaults in code)
 
-4. Start the API container:
+4. Build/start the API:
+
 ```bash
 docker compose up -d --build
 ```
 
-5. Start or reload Caddy:
+5. Load Caddy config:
+
+- Direct use:
+
 ```bash
-caddy run --config /home/you/wwebjs-express/Caddyfile --adapter caddyfile
-caddy reload --config /home/you/wwebjs-express/Caddyfile --adapter caddyfile
+caddy validate --config /absolute/path/to/Caddyfile --adapter caddyfile
+caddy reload --config /absolute/path/to/Caddyfile --adapter caddyfile
 ```
+
+- Imported into a parent Caddyfile:
+
+```caddyfile
+import /absolute/path/to/wwebjs-express/Caddyfile
+```
+
+Notes about env/import behavior are kept in comments inside `Caddyfile` and `docker-compose.yml`.
 
 ## Usage
 
-1. Start a session:
+Set local shell vars used in examples:
+
 ```bash
-curl -u $BASIC_AUTH_USER:<your_plaintext_password> \
-  https://$DOMAIN/web-start/<session_id>
+export DOMAIN='domain.example.com'
+export BASIC_AUTH_USER='user'
+export BASIC_AUTH_PASS='pass'
+export API_KEY='your_api_key'
+export SESSION='your_session_name'
 ```
 
-2. Open QR/live page for pairing/status (`/web-image`):
+1. Start a WhatsApp session:
+
 ```bash
-curl -u $BASIC_AUTH_USER:<your_plaintext_password> \
-  https://$DOMAIN/web-image/<session_id>
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
+  "https://$DOMAIN/web-start/$SESSION"
 ```
 
-3. Check active session states:
+2. Get QR (not paired yet) or live WhatsApp screenshot (already paired):
+
 ```bash
-curl -u $BASIC_AUTH_USER:<your_plaintext_password> \
-  https://$DOMAIN/web-stats
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
+  "https://$DOMAIN/web-image/$SESSION"
 ```
 
-4. Stop a session:
+3. Check session state(s):
+
 ```bash
-curl -u $BASIC_AUTH_USER:<your_plaintext_password> \
-  https://$DOMAIN/web-stop/<session_id>
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
+  "https://$DOMAIN/web-stats"
 ```
 
-5. Send text:
+4. Send text (`text` is required):
+
 ```bash
-curl -X POST https://$DOMAIN/send-text \
+curl -X POST "https://$DOMAIN/send-text" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"session":"<session_id>","to":"13001234567","text":"Hello"}'
+  -d '{"session":"'"$SESSION"'","to":"15551234567","text":"Hello from API"}'
 ```
 
-6. Send file:
+5. Send file by URL:
+
 ```bash
-curl -X POST https://$DOMAIN/send-file \
+curl -X POST "https://$DOMAIN/send-file" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"session":"<session_id>","to":"13001234567","url":"https://example.com/file.pdf","filename":"file.pdf"}'
+  -d '{"session":"'"$SESSION"'","to":"15551234567","url":"https://example.com/file.pdf","filename":"file.pdf","caption":"Optional caption"}'
 ```
 
-## Endpoint Summary
+6. Stop a session:
 
-| Endpoint | Method | Auth |
-|---|---|---|
-| `/web-start/:id` | `GET` | Basic Auth |
-| `/web-stop/:id` | `GET` | Basic Auth |
-| `/web-image/:id` | `GET` | Basic Auth |
-| `/web-stats` | `GET` | Basic Auth |
-| `/send-text` | `POST` | `X-API-Key` |
-| `/send-file` | `POST` | `X-API-Key` |
-| `/files/*` | `GET`,`HEAD` | Public |
+```bash
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
+  "https://$DOMAIN/web-stop/$SESSION"
+```
+
+7. Access saved media file (public endpoint):
+
+```bash
+curl -I "https://$DOMAIN/files/<filename_from_webhook_or_send_file_response>"
+```
+
+### Endpoint Reference
+
+| Endpoint | Method | Auth | Purpose |
+|---|---|---|---|
+| `/web-start/:id` | `GET` | Basic Auth | Start/init session |
+| `/web-stop/:id` | `GET` | Basic Auth | Stop session |
+| `/web-image/:id` | `GET` | Basic Auth | QR or live screenshot |
+| `/web-stats` | `GET` | Basic Auth | Session states |
+| `/send-text` | `POST` | `X-API-Key` | Send text message |
+| `/send-file` | `POST` | `X-API-Key` | Download + send file |
+| `/files/*` | `GET`,`HEAD` | Public | Retrieve saved media |
 
 ## Webhook Events
 
-- Incoming WhatsApp messages are sent to `WEBHOOK_URL` with `event: "message"`.
-- Incoming message reactions are also sent as `event: "message"` with `type: "reaction"`.
-- Message/reaction payloads include `notifyName` as best-effort via contact lookup when available; it may still be `null`.
-- Message/reaction payloads include `phoneNumber` as best-effort (from `client.getContactById` and ID parsing); it may be `null`, especially for some `@lid` contacts.
-- For incoming media messages, `media.url` is absolute when `DOMAIN` is a valid public host; otherwise it is relative (`/files/...`).
-- Incoming `audio`/`ptt` messages are transcribed with whisper.cpp (`WHISPER_MODEL`, default `tiny`, timeout via `WHISPER_TIMEOUT_SECONDS`). If no speech is detected, body is `[Inaudible Audio]`; if transcription fails, body is `[Transcription Failed]`.
-- Session lifecycle events use `event: "session"` with `type`: `authenticated`, `ready` (`state: "READY"`), `state_change` (`state`), `auth_failure` (`error`), and `disconnected` (`reason`).
+Incoming events are POSTed to `WEBHOOK_URL`.
 
-## Import Into Parent Stack (Advanced)
+### 1) Incoming message (`event: "message"`)
 
-Docker Compose:
-```bash
-WWEBJS_ROOT=/home/you/wwebjs-express \
-docker compose \
-  -f /path/to/parent/docker-compose.yml \
-  -f /home/you/wwebjs-express/docker-compose.yml \
-  up -d
+```json
+{
+  "event": "message",
+  "session": "your_session_name",
+  "from": "15551234567@c.us",
+  "body": "Hello",
+  "type": "chat",
+  "notifyName": "John",
+  "phoneNumber": "15551234567"
+}
 ```
 
-Optional compose overrides:
-- `WWEBJS_ROOT` path to this repo
-- `WWEBJS_CONTAINER_NAME` default `wwebjs-express`
-- `WWEBJS_BIND_IP` default `127.0.0.1`
+### 2) Incoming media message
 
-Caddy (top-level import):
-```caddyfile
-import /home/you/wwebjs-express/Caddyfile
+```json
+{
+  "event": "message",
+  "session": "your_session_name",
+  "from": "15551234567@c.us",
+  "body": "filename.pdf",
+  "type": "document",
+  "notifyName": "John",
+  "phoneNumber": "15551234567",
+  "media": {
+    "url": "https://domain.example.com/files/1772577946996_filename.pdf",
+    "mimetype": "application/pdf",
+    "filename": "filename.pdf"
+  }
+}
 ```
 
-Important:
-- `{$...}` placeholders in `Caddyfile` are read from the Caddy process environment.
-- `.env` used by Docker Compose is not automatically loaded by host/systemd Caddy.
-- If env vars are not loaded into Caddy, either load them in the Caddy service environment or replace placeholders with literal values.
+### 3) Incoming reaction (sent as message event)
 
-If Caddy runs in Docker on the same network, set:
-```env
-WWEBJS_UPSTREAM_HOST=wwebjs-api
+```json
+{
+  "event": "message",
+  "session": "your_session_name",
+  "from": "15551234567@c.us",
+  "body": "👍",
+  "type": "reaction",
+  "notifyName": "John",
+  "phoneNumber": "15551234567"
+}
 ```
 
-## Notes
+### 4) Session lifecycle (`event: "session"`)
 
-- API binds to `127.0.0.1` by default in Compose.
-- Persisted data lives in `sessions/` and `files/`.
-- Keep origin restricted (especially when using Cloudflare) so only expected clients can reach Caddy.
-- For accurate per-user rate limits behind Cloudflare, configure trusted proxies in your parent/global Caddy config so `{client_ip}` resolves to the real client IP.
-- If logs show `Whisper model not found`, run:
-  - `docker exec -it wwebjs-express bash -lc "cd /app/node_modules/whisper-node/lib/whisper.cpp/models && ./download-ggml-model.sh tiny && ls -lh ggml-tiny.bin"`
+```json
+{
+  "event": "session",
+  "session": "your_session_name",
+  "type": "ready",
+  "state": "READY"
+}
+```
+
+Session `type` values:
+
+- `authenticated`
+- `ready`
+- `state_change`
+- `auth_failure`
+- `disconnected`
+
+Additional webhook behavior:
+
+- `notifyName` and `phoneNumber` are best-effort and may be `null`.
+- Reactions are de-duplicated before webhook delivery.
+- `audio` / `ptt` messages use whisper.cpp transcription; no speech becomes `[Inaudible Audio]`.
+- If transcription fails for `audio` / `ptt`, `body` becomes `[Transcription Failed]`.
+- Session payload details: `state_change` includes `state`, `auth_failure` includes `error`, and `disconnected` includes `reason`.
+- If `DOMAIN` is invalid/unset, media URLs fall back to relative paths (`/files/...`).
+
+## Data Persistence
+
+- `sessions/` stores WhatsApp auth/session data.
+- `files/` stores downloaded/saved media files.

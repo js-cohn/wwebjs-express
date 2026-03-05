@@ -22,6 +22,10 @@ const {
 const router = express.Router();
 const FILES_DIR = path.join(__dirname, "files");
 
+/**
+ * Escapes user-controlled text before embedding into HTML responses.
+ * Used by /web-image to prevent reflected HTML/script injection.
+ */
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, "&amp;")

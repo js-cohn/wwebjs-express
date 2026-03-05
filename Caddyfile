@@ -1,10 +1,18 @@
-# This file can be used directly with `caddy run --config ...`
-# or imported at top-level from a parent Caddyfile:
-#   import /absolute/path/to/this/Caddyfile
-# Keep only one site block per domain in the final composed config.
-# Note: {$...} placeholders are read from the Caddy process environment.
-# If your Caddy service does not load these env vars, either load them
-# (e.g. EnvironmentFile in systemd) or replace placeholders with literals.
+# Use directly (`caddy run --config ...`) or import from a parent Caddyfile.
+# If imported, env placeholders below are still read from the Caddy service
+# process environment (not from Docker Compose automatically).
+#
+# If placeholders are not resolving:
+# 1) Add your env file to systemd:
+#      run `sudo systemctl edit caddy` and add:
+#      [Service]
+#      EnvironmentFile=/absolute/path/to/wwebjs-express/.env
+# 2) Reload/restart Caddy:
+#      sudo systemctl daemon-reload && sudo systemctl restart caddy
+# 3) Verify env file is loaded:
+#      sudo systemctl show caddy -p EnvironmentFiles
+#      pid=$(pgrep -x caddy | head -n1)
+#      sudo sh -c "tr '\0' '\n' < /proc/$pid/environ | grep -E '^(DOMAIN|PORT|WWEBJS_UPSTREAM_HOST|BASIC_AUTH_USER|BASIC_AUTH_HASH|API_KEY)='"
 (upstream) {
     reverse_proxy {$WWEBJS_UPSTREAM_HOST:localhost}:{$PORT:3003} {
         transport http {
