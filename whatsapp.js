@@ -71,14 +71,67 @@ function startSession(sessionId, options = {}) {
   });
 
   clients[sessionId] = client;
-  // Watchdog to detect if the browser handshake hangs.
+  let isRecycling = false;
+
+  /**
+   * Tears down a stuck/broken client and schedules a bounded retry when allowed.
+   * @param {{reason: string, error?: unknown, retryable?: boolean}} params
+   */
+  async function recycleAndMaybeRetry(params) {
+    const { reason, error = null, retryable = true } = params;
+    if (isRecycling) return;
+    isRecycling = true;
+
+    clearTimeout(watchdog);
+    if (error) {
+      console.error(`[${sessionId}] ${reason}:`, error);
+    } else {
+      console.warn(`[${sessionId}] ${reason}`);
+    }
+
+    try {
+      await client.destroy();
+    } catch {
+      // no-op
+    }
+
+    if (clients[sessionId] === client) {
+      delete clients[sessionId];
+    }
+    delete qrCodes[sessionId];
+
+    const nextAttempt = (initRetryCounts[sessionId] || 0) + 1;
+    if (retryable && nextAttempt <= MAX_INIT_RETRIES) {
+      initRetryCounts[sessionId] = nextAttempt;
+      const delayMs = nextAttempt * 2000;
+      console.warn(
+        `[${sessionId}] Retrying initialization (${nextAttempt}/${MAX_INIT_RETRIES}) in ${delayMs}ms...`,
+      );
+      if (!initRetryTimers[sessionId]) {
+        initRetryTimers[sessionId] = setTimeout(() => {
+          delete initRetryTimers[sessionId];
+          startSession(sessionId, { preserveRetryCount: true });
+        }, delayMs);
+      }
+      return;
+    }
+
+    delete initRetryCounts[sessionId];
+    if (retryable) {
+      console.error(
+        `[${sessionId}] Reached max initialization retries (${MAX_INIT_RETRIES}). Session remains stopped.`,
+      );
+    }
+  }
+
+  // Watchdog to detect if browser startup is stuck.
   let watchdog = setTimeout(async () => {
     const state = await client.getState().catch(() => null);
     if (!state || state === "INITIALIZING") {
-      console.log(
-        `[${sessionId}] ⚠️ Handshake hang detected. Force-reloading browser...`,
-      );
-      if (client.pupPage) await client.pupPage.reload().catch(() => {});
+      await recycleAndMaybeRetry({
+        reason: "⚠️ Handshake hang detected while INITIALIZING",
+        retryable: true,
+      });
     }
   }, 120000); // 2 minutes
 
@@ -419,35 +472,11 @@ function startSession(sessionId, options = {}) {
 
   const tryInitialize = () => {
     client.initialize().catch(async (err) => {
-      clearTimeout(watchdog);
-      console.error(`[${sessionId}] Init error:`, err);
-
-      try {
-        await client.destroy();
-      } catch {
-        // no-op
-      }
-
-      if (clients[sessionId] === client) {
-        delete clients[sessionId];
-      }
-
-      const nextAttempt = (initRetryCounts[sessionId] || 0) + 1;
-      if (isRetryableInitError(err) && nextAttempt <= MAX_INIT_RETRIES) {
-        initRetryCounts[sessionId] = nextAttempt;
-        const delayMs = nextAttempt * 2000;
-        console.warn(
-          `[${sessionId}] Retrying initialization (${nextAttempt}/${MAX_INIT_RETRIES}) in ${delayMs}ms...`,
-        );
-        if (!initRetryTimers[sessionId]) {
-          initRetryTimers[sessionId] = setTimeout(() => {
-            delete initRetryTimers[sessionId];
-            startSession(sessionId, { preserveRetryCount: true });
-          }, delayMs);
-        }
-      } else {
-        delete initRetryCounts[sessionId];
-      }
+      await recycleAndMaybeRetry({
+        reason: "Init error",
+        error: err,
+        retryable: isRetryableInitError(err),
+      });
     });
   };
 
