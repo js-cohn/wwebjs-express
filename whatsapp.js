@@ -59,13 +59,16 @@ function startSession(sessionId, options = {}) {
       dataPath: SESSIONS_DIR,
     }),
     puppeteer: {
-      headless: "new",
+      // Favor stable headless mode for long-running Linux servers.
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--single-process",
-        "--no-zygote",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
       ],
     },
   });
