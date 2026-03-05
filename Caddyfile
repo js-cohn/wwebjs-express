@@ -6,7 +6,7 @@
 # If your Caddy service does not load these env vars, either load them
 # (e.g. EnvironmentFile in systemd) or replace placeholders with literals.
 (upstream) {
-    reverse_proxy {$WWEBJS_UPSTREAM_HOST:localhost}:{$PORT} {
+    reverse_proxy {$WWEBJS_UPSTREAM_HOST:localhost}:{$PORT:3003} {
         transport http {
             dial_timeout 5s
             response_header_timeout 30s
