@@ -1,0 +1,86 @@
+# This file can be used directly with `caddy run --config ...`
+# or imported at top-level from a parent Caddyfile:
+#   import /absolute/path/to/this/Caddyfile
+# Keep only one site block per domain in the final composed config.
+# Note: {$...} placeholders are read from the Caddy process environment.
+# If your Caddy service does not load these env vars, either load them
+# (e.g. EnvironmentFile in systemd) or replace placeholders with literals.
+(upstream) {
+    reverse_proxy {$WWEBJS_UPSTREAM_HOST:localhost}:{$PORT} {
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 30s
+            read_timeout 30s
+            write_timeout 30s
+        }
+    }
+}
+
+{$DOMAIN:localhost} {
+    # Public access to media files.
+    # Express handles this route and disables directory browsing natively.
+    @files path /files/*
+    handle @files {
+        @files_bad_method {
+            not method GET HEAD
+        }
+        respond @files_bad_method "Method Not Allowed" 405
+        import upstream
+    }
+
+    # Shared /web-* rate limit (management endpoints)
+    # Use {client_ip} so Cloudflare/user IP is used when trusted proxies are configured
+    # in the parent/global Caddy config.
+    @web path /web-*
+    handle @web {
+        @web_bad_method {
+            not method GET
+        }
+        respond @web_bad_method "Method Not Allowed" 405
+
+        rate_limit {
+            zone web_auth_limit {
+                key {client_ip}
+                events 50
+                window 5m
+            }
+        }
+
+        basic_auth {
+            {$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+        }
+        import upstream
+    }
+
+    # POSTs: 1000 attempts per minute
+    @send path /send-*
+    handle @send {
+        @send_bad_method {
+            not method POST
+        }
+        respond @send_bad_method "Method Not Allowed" 405
+
+        request_body {
+            max_size 64KB
+        }
+
+        rate_limit {
+            zone api_send_limit {
+                key {client_ip}
+                events 1000
+                window 1m
+            }
+        }
+
+        @unauthorized {
+            not header X-API-Key "{$API_KEY}"
+        }
+        respond @unauthorized "Unauthorized" 401
+
+        import upstream
+    }
+
+    handle {
+        respond "Not Found" 404
+    }
+}

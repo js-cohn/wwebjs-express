@@ -1,0 +1,19 @@
+services:
+  wwebjs-api:
+    build:
+      context: ${WWEBJS_ROOT:-.}
+    container_name: ${WWEBJS_CONTAINER_NAME:-wwebjs-express}
+    restart: unless-stopped
+    env_file:
+      - ${WWEBJS_ROOT:-.}/.env
+    ports:
+      - "${WWEBJS_BIND_IP:-127.0.0.1}:${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      - ${WWEBJS_ROOT:-.}/sessions:/app/sessions
+      - ${WWEBJS_ROOT:-.}/files:/app/files
+    mem_limit: 1024m
+    shm_size: "512mb"
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
