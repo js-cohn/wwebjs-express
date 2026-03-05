@@ -133,7 +133,7 @@ function startSession(sessionId, options = {}) {
         retryable: true,
       });
     }
-  }, 120000); // 2 minutes
+  }, 60000); // 1 minute
 
   // --- Client Event Handlers ---
 
