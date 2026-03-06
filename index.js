@@ -41,8 +41,12 @@ app.listen(PORT, "0.0.0.0", () =>
 // --- Session Restore ---
 // Delay restore slightly after boot to reduce Chromium/Puppeteer startup races.
 setTimeout(() => {
-  const { restored } = restorePersistedSessions();
-  if (restored.length > 0) {
-    console.log(`♻️ Restoring persisted sessions: ${restored.join(", ")}`);
+  try {
+    const { restored } = restorePersistedSessions();
+    if (restored.length > 0) {
+      console.log(`♻️ Restoring persisted sessions: ${restored.join(", ")}`);
+    }
+  } catch (error) {
+    console.error("Session restore failed at startup:", error);
   }
 }, RESTORE_DELAY_MS);

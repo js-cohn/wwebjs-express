@@ -23,6 +23,7 @@ const initRetryTimers = {};
 // Tracks how many init retries have been attempted per session.
 const initRetryCounts = {};
 const MAX_INIT_RETRIES = 3;
+const INIT_RETRY_DELAY_MS = 1000;
 
 /**
  * Returns true when an init error is likely transient and worth retrying.
@@ -106,14 +107,19 @@ function startSession(sessionId, options = {}) {
     const nextAttempt = (initRetryCounts[sessionId] || 0) + 1;
     if (retryable && nextAttempt <= MAX_INIT_RETRIES) {
       initRetryCounts[sessionId] = nextAttempt;
-      const delayMs = nextAttempt * 2000;
+      const delayMs = INIT_RETRY_DELAY_MS;
       console.warn(
         `[${sessionId}] Retrying initialization (${nextAttempt}/${MAX_INIT_RETRIES}) in ${delayMs}ms...`,
       );
       if (!initRetryTimers[sessionId]) {
         initRetryTimers[sessionId] = setTimeout(() => {
           delete initRetryTimers[sessionId];
-          startSession(sessionId, { preserveRetryCount: true });
+          try {
+            startSession(sessionId, { preserveRetryCount: true });
+          } catch (error) {
+            delete initRetryCounts[sessionId];
+            console.error(`[${sessionId}] Retry start failed:`, error);
+          }
         }, delayMs);
       }
       return;
