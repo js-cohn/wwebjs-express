@@ -153,6 +153,9 @@ router.post("/send-text", async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     const message = e.message || "Failed to send message";
+    if (message === "Invalid destination") {
+      return res.status(400).json({ error: "Invalid destination" });
+    }
     res
       .status(message === "Session not active" ? 404 : 500)
       .json({ error: message });

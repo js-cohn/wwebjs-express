@@ -391,8 +391,16 @@ function classifySendFileError(error) {
     return { status: 413, error: "File exceeds maximum size" };
   }
 
+  if (message === "Session not active") {
+    return { status: 404, error: "Session not active" };
+  }
+
   if (clientErrorMessages.includes(message)) {
     return { status: 400, error: message };
+  }
+
+  if (message === "Invalid destination") {
+    return { status: 400, error: "Invalid destination" };
   }
 
   if (axios.isAxiosError(error)) {
