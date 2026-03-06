@@ -30,11 +30,11 @@ COPY package*.json ./
 # Install Node dependencies before app source for better layer caching.
 RUN npm install
 
-# Build whisper.cpp and pre-download the default tiny model.
+# Build whisper.cpp and pre-download the default base model.
 RUN cd node_modules/whisper-node/lib/whisper.cpp && make
 RUN cd node_modules/whisper-node/lib/whisper.cpp/models \
-    && ./download-ggml-model.sh tiny \
-    && test -s ggml-tiny.bin
+    && ./download-ggml-model.sh base \
+    && test -s ggml-base.bin
 
 COPY . .
 

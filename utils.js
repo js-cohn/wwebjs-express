@@ -44,8 +44,6 @@ const WHISPER_CPP_DIR = path.join(
 const WHISPER_CPP_MAIN = path.join(WHISPER_CPP_DIR, "main");
 const WHISPER_MODELS_DIR = path.join(WHISPER_CPP_DIR, "models");
 const WHISPER_MODEL_FILE_BY_NAME = {
-  tiny: "ggml-tiny.bin",
-  "tiny.en": "ggml-tiny.en.bin",
   base: "ggml-base.bin",
   "base.en": "ggml-base.en.bin",
   small: "ggml-small.bin",
@@ -115,7 +113,7 @@ function postWebhook(payload, errorPrefix = "Webhook relay failed") {
 
 /**
  * Gets the absolute path to a whisper.cpp model file.
- * @param {string} modelName - The name of the model (e.g., "tiny").
+ * @param {string} modelName - The name of the model (e.g., "base").
  * @returns {string|null} The full path to the model file or null if not found.
  */
 function getWhisperModelPath(modelName) {
@@ -160,7 +158,7 @@ function runWhisperCpp(filePath, modelPath) {
  * @returns {Promise<string>} A promise that resolves with the transcription text.
  */
 async function transcribeAudio(filePath) {
-  const modelName = WHISPER_MODEL || "tiny";
+  const modelName = WHISPER_MODEL || "base";
   const modelPath = getWhisperModelPath(modelName);
   if (!modelPath) {
     throw new Error(`Unsupported Whisper model: ${modelName}`);

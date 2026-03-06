@@ -42,7 +42,7 @@ Minimum values you should set:
 - `API_KEY`
 - `BASIC_AUTH_USER`
 - `BASIC_AUTH_HASH`
-- `WHISPER_MODEL` (optional, defaults in code)
+- `WHISPER_MODEL` (optional, defaults to `base`)
 
 4. Build/start the API:
 
