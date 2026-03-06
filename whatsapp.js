@@ -527,9 +527,11 @@ function restorePersistedSessions() {
 /**
  * Stops a WhatsApp session, logs out, and cleans up resources.
  * @param {string} sessionId - The ID of the session to stop.
+ * @param {{logout?: boolean}} [options] - When true, also invalidates WhatsApp auth.
  * @returns {Promise<boolean>} True if the session was stopped, false if it was not found.
  */
-async function stopSession(sessionId) {
+async function stopSession(sessionId, options = {}) {
+  const { logout = false } = options;
   const hadPendingRetry = Boolean(initRetryTimers[sessionId]);
   if (hadPendingRetry) {
     clearTimeout(initRetryTimers[sessionId]);
@@ -541,10 +543,14 @@ async function stopSession(sessionId) {
   if (!client) return hadPendingRetry;
 
   try {
-    await client.logout();
+    if (logout) {
+      await client.logout();
+    } else {
+      await client.destroy();
+    }
   } catch (e) {
     console.error(
-      `[${sessionId}] Failed to logout, attempting to destroy:`,
+      `[${sessionId}] Failed to stop cleanly, forcing destroy:`,
       e.message,
     );
     try {

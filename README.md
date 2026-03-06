@@ -136,7 +136,7 @@ curl -I "https://$DOMAIN/files/<filename_from_webhook_or_send_file_response>"
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
 | `/web-start/:id` | `GET` | Basic Auth | Start/init session |
-| `/web-stop/:id` | `GET` | Basic Auth | Stop session |
+| `/web-stop/:id` | `GET` | Basic Auth | Stop client (keeps auth) |
 | `/web-image/:id` | `GET` | Basic Auth | QR or live screenshot |
 | `/web-stats` | `GET` | Basic Auth | Session states |
 | `/send-text` | `POST` | `X-API-Key` | Send text message |
