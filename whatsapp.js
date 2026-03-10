@@ -18,41 +18,53 @@ const FILES_DIR = path.join(__dirname, "files");
 const clients = {};
 // Stores QR codes for sessions pending authentication, keyed by session ID.
 const qrCodes = {};
-// Tracks scheduled init retries per session to avoid duplicate timers.
-const initRetryTimers = {};
-// Tracks how many init retries have been attempted per session.
-const initRetryCounts = {};
-const MAX_INIT_RETRIES = 3;
-const INIT_RETRY_DELAY_MS = 1000;
+const SESSION_STATE_TIMEOUT_MS = 2000;
 
 /**
- * Returns true when an init error is likely transient and worth retrying.
- * @param {unknown} error
- * @returns {boolean}
+ * Removes a client from in-memory state only if it is still the current client.
+ * This avoids stale event handlers deleting a newer client for the same session.
+ * @param {string} sessionId
+ * @param {Client} client
  */
-function isRetryableInitError(error) {
-  const message = String(error?.message || "");
-  return (
-    /Execution context was destroyed/i.test(message) ||
-    /Target closed/i.test(message) ||
-    /Session closed/i.test(message) ||
-    /Navigation failed because browser has disconnected/i.test(message)
-  );
+function removeClientIfCurrent(sessionId, client) {
+  if (clients[sessionId] === client) {
+    delete clients[sessionId];
+  }
+  delete qrCodes[sessionId];
+}
+
+/**
+ * Bounds client.getState() so wedged browser contexts do not hang routes/watchdogs.
+ * @param {Client} client
+ * @param {number} [timeoutMs]
+ * @returns {Promise<string|null>}
+ */
+async function getClientStateWithTimeout(
+  client,
+  timeoutMs = SESSION_STATE_TIMEOUT_MS,
+) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      client.getState().catch(() => "OFFLINE"),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve("OFFLINE"), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
  * Starts a new WhatsApp session.
  * This involves creating a client, setting up event listeners, and initializing the connection.
  * @param {string} sessionId - A unique identifier for the session.
- * @param {{preserveRetryCount?: boolean}} [options] - Optional startup flags.
  * @returns {boolean} True if the session initialization started, false if the session already exists.
  */
-function startSession(sessionId, options = {}) {
-  const { preserveRetryCount = false } = options;
+function startSession(sessionId) {
   if (clients[sessionId]) return false;
-  if (!preserveRetryCount) {
-    delete initRetryCounts[sessionId];
-  }
 
   const client = new Client({
     authStrategy: new LocalAuth({
@@ -75,17 +87,17 @@ function startSession(sessionId, options = {}) {
   });
 
   clients[sessionId] = client;
-  let isRecycling = false;
+  let isCleaningUp = false;
   let hasAnnouncedReady = false;
 
   /**
-   * Tears down a stuck/broken client and schedules a bounded retry when allowed.
-   * @param {{reason: string, error?: unknown, retryable?: boolean}} params
+   * Tears down a stuck/broken client so a fresh /web-start can be attempted.
+   * @param {{reason: string, error?: unknown}} params
    */
-  async function recycleAndMaybeRetry(params) {
-    const { reason, error = null, retryable = true } = params;
-    if (isRecycling) return;
-    isRecycling = true;
+  async function cleanupFailedClient(params) {
+    const { reason, error = null } = params;
+    if (isCleaningUp) return;
+    isCleaningUp = true;
 
     clearTimeout(watchdog);
     if (error) {
@@ -100,47 +112,16 @@ function startSession(sessionId, options = {}) {
       // no-op
     }
 
-    if (clients[sessionId] === client) {
-      delete clients[sessionId];
-    }
-    delete qrCodes[sessionId];
-
-    const nextAttempt = (initRetryCounts[sessionId] || 0) + 1;
-    if (retryable && nextAttempt <= MAX_INIT_RETRIES) {
-      initRetryCounts[sessionId] = nextAttempt;
-      const delayMs = INIT_RETRY_DELAY_MS;
-      console.warn(
-        `[${sessionId}] Retrying initialization (${nextAttempt}/${MAX_INIT_RETRIES}) in ${delayMs}ms...`,
-      );
-      if (!initRetryTimers[sessionId]) {
-        initRetryTimers[sessionId] = setTimeout(() => {
-          delete initRetryTimers[sessionId];
-          try {
-            startSession(sessionId, { preserveRetryCount: true });
-          } catch (error) {
-            delete initRetryCounts[sessionId];
-            console.error(`[${sessionId}] Retry start failed:`, error);
-          }
-        }, delayMs);
-      }
-      return;
-    }
-
-    delete initRetryCounts[sessionId];
-    if (retryable) {
-      console.error(
-        `[${sessionId}] Reached max initialization retries (${MAX_INIT_RETRIES}). Session remains stopped.`,
-      );
-    }
+    removeClientIfCurrent(sessionId, client);
   }
 
   // Watchdog to detect if browser startup is stuck.
   let watchdog = setTimeout(async () => {
-    const state = await client.getState().catch(() => null);
-    if (!state || state === "INITIALIZING") {
-      await recycleAndMaybeRetry({
-        reason: "⚠️ Handshake hang detected while INITIALIZING",
-        retryable: true,
+    const state = await getClientStateWithTimeout(client);
+    if (!state || state === "INITIALIZING" || state === "OFFLINE") {
+      await cleanupFailedClient({
+        reason:
+          "⚠️ Handshake hang detected while INITIALIZING. Call /web-start/:id to try again.",
       });
     }
   }, 60000); // 1 minute
@@ -156,11 +137,6 @@ function startSession(sessionId, options = {}) {
     hasAnnouncedReady = true;
     clearTimeout(watchdog);
     delete qrCodes[sessionId];
-    if (initRetryTimers[sessionId]) {
-      clearTimeout(initRetryTimers[sessionId]);
-      delete initRetryTimers[sessionId];
-    }
-    delete initRetryCounts[sessionId];
     console.log(`✅ [${sessionId}] WhatsApp is Ready`);
     postWebhook({
       event: "session",
@@ -198,6 +174,7 @@ function startSession(sessionId, options = {}) {
 
   client.on("disconnected", (reason) => {
     clearTimeout(watchdog);
+    removeClientIfCurrent(sessionId, client);
     postWebhook({
       event: "session",
       session: sessionId,
@@ -484,10 +461,9 @@ function startSession(sessionId, options = {}) {
 
   const tryInitialize = () => {
     client.initialize().catch(async (err) => {
-      await recycleAndMaybeRetry({
+      await cleanupFailedClient({
         reason: "Init error",
         error: err,
-        retryable: isRetryableInitError(err),
       });
     });
   };
@@ -498,52 +474,15 @@ function startSession(sessionId, options = {}) {
 }
 
 /**
- * Restores persisted LocalAuth sessions from disk at process startup.
- * LocalAuth stores session data under directories like `session-<id>`.
- * @returns {{restored: string[], skipped: string[]}} Restored and skipped IDs.
- */
-function restorePersistedSessions() {
-  if (!fs.existsSync(SESSIONS_DIR)) {
-    return { restored: [], skipped: [] };
-  }
-
-  const entries = fs.readdirSync(SESSIONS_DIR, { withFileTypes: true });
-  const persistedIds = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .filter((name) => name.startsWith("session-"))
-    .map((name) => name.slice(8))
-    .map((id) => id.trim())
-    .filter(Boolean);
-
-  const restored = [];
-  const skipped = [];
-  for (const sessionId of [...new Set(persistedIds)]) {
-    const started = startSession(sessionId);
-    if (started) restored.push(sessionId);
-    else skipped.push(sessionId);
-  }
-
-  return { restored, skipped };
-}
-
-/**
- * Stops a WhatsApp session, logs out, and cleans up resources.
+ * Stops a WhatsApp session client and cleans up resources.
  * @param {string} sessionId - The ID of the session to stop.
  * @param {{logout?: boolean}} [options] - When true, also invalidates WhatsApp auth.
  * @returns {Promise<boolean>} True if the session was stopped, false if it was not found.
  */
 async function stopSession(sessionId, options = {}) {
   const { logout = false } = options;
-  const hadPendingRetry = Boolean(initRetryTimers[sessionId]);
-  if (hadPendingRetry) {
-    clearTimeout(initRetryTimers[sessionId]);
-    delete initRetryTimers[sessionId];
-  }
-  delete initRetryCounts[sessionId];
-
   const client = clients[sessionId];
-  if (!client) return hadPendingRetry;
+  if (!client) return false;
 
   try {
     if (logout) {
@@ -563,8 +502,7 @@ async function stopSession(sessionId, options = {}) {
     }
   }
 
-  delete clients[sessionId];
-  delete qrCodes[sessionId];
+  removeClientIfCurrent(sessionId, client);
   return true;
 }
 
@@ -593,7 +531,7 @@ function getQrCode(sessionId) {
 async function getSessionStats() {
   const stats = {};
   for (const id in clients) {
-    const state = await clients[id].getState().catch(() => "OFFLINE");
+    const state = await getClientStateWithTimeout(clients[id]);
     stats[id] = state || "INITIALIZING";
   }
   return stats;
@@ -750,7 +688,6 @@ async function sendFile(
 
 module.exports = {
   startSession,
-  restorePersistedSessions,
   stopSession,
   getSession,
   getQrCode,

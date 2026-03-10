@@ -53,21 +53,23 @@ router.get("/web-start/:id", (req, res) => {
 
 /**
  * --- Management Endpoint ---
- * Stops a WhatsApp session.
+ * Pauses a WhatsApp session client without clearing saved auth.
  * @param {string} id - The session ID.
  * @returns {string} A confirmation message.
- * 200: Session stopped.
+ * 200: Session paused.
  * 404: Session not found.
  */
-router.get("/web-stop/:id", async (req, res) => {
+async function handlePauseSession(req, res) {
   const sessionId = req.params.id;
   const stopped = await stopSession(sessionId);
   if (stopped) {
-    res.send(`Session ${sessionId} has been stopped.`);
+    res.send(`Session ${sessionId} has been paused.`);
   } else {
     res.status(404).send(`Session ${sessionId} not found.`);
   }
-});
+}
+
+router.get("/web-pause/:id", handlePauseSession);
 
 /**
  * --- Management Endpoint ---

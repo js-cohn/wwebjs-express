@@ -1,5 +1,7 @@
 const axios = require("axios");
 const fs = require("fs");
+const http = require("http");
+const https = require("https");
 const path = require("path");
 const { execFile } = require("child_process");
 const dns = require("dns").promises;
@@ -281,10 +283,35 @@ function isLocalHostname(hostname) {
 }
 
 /**
+ * Pins outbound requests to a previously validated IP address.
+ * This avoids DNS rebinding between validation time and connect time.
+ * @param {string} address - The validated IP address.
+ * @param {4|6} family - The IP family.
+ * @returns {(hostname: string, options: object, callback: Function) => void}
+ */
+function buildPinnedLookup(address, family) {
+  return (_hostname, _options, callback) => callback(null, address, family);
+}
+
+/**
+ * Builds request options that force axios/node to reuse the validated DNS result.
+ * @param {ReturnType<typeof buildPinnedLookup>|null} lookup
+ * @returns {{httpAgent?: import('http').Agent, httpsAgent?: import('https').Agent}}
+ */
+function buildPinnedRequestOptions(lookup) {
+  if (!lookup) return {};
+  return {
+    httpAgent: new http.Agent({ lookup }),
+    httpsAgent: new https.Agent({ lookup }),
+  };
+}
+
+/**
  * Validates a URL to ensure it is safe to download from.
  * This is a critical security function to prevent Server-Side Request Forgery (SSRF).
  * @param {string} rawUrl - The URL to validate.
- * @returns {Promise<string>} The validated URL as a string.
+ * @returns {Promise<{url: string, lookup: ReturnType<typeof buildPinnedLookup>|null}>}
+ * The validated URL and optional DNS lookup pinning for the eventual request.
  * @throws {Error} If the URL is invalid or points to a protected resource.
  */
 async function assertSafeDownloadUrl(rawUrl) {
@@ -312,7 +339,7 @@ async function assertSafeDownloadUrl(rawUrl) {
     if (isPrivateIpAddress(hostname)) {
       throw new Error("Private IP ranges are not allowed");
     }
-    return parsed.toString();
+    return { url: parsed.toString(), lookup: null };
   }
 
   // 3. If it's a domain, resolve it and check all resulting IPs.
@@ -322,7 +349,14 @@ async function assertSafeDownloadUrl(rawUrl) {
     throw new Error("Resolved host is in a private IP range");
   }
 
-  return parsed.toString();
+  const preferredAddress = resolved[0];
+  return {
+    url: parsed.toString(),
+    lookup: buildPinnedLookup(
+      preferredAddress.address,
+      preferredAddress.family,
+    ),
+  };
 }
 
 /**
@@ -332,17 +366,19 @@ async function assertSafeDownloadUrl(rawUrl) {
  * @returns {Promise<{response: import('axios').AxiosResponse, finalUrl: string}>} The download response and the final URL.
  */
 async function downloadWithSafeRedirects(rawUrl) {
-  let currentUrl = await assertSafeDownloadUrl(rawUrl);
+  let currentTarget = await assertSafeDownloadUrl(rawUrl);
 
   for (let hop = 0; hop <= maxDownloadRedirects; hop += 1) {
-    const response = await axios.get(currentUrl, {
+    const response = await axios.get(currentTarget.url, {
       responseType: "arraybuffer",
       timeout: fileDownloadTimeoutMs,
       maxContentLength: maxDownloadSizeBytes,
       maxBodyLength: maxDownloadSizeBytes,
+      proxy: false,
       maxRedirects: 0, // We handle redirects manually.
       validateStatus: (status) =>
         (status >= 200 && status < 300) || (status >= 300 && status < 400),
+      ...buildPinnedRequestOptions(currentTarget.lookup),
     });
 
     if (response.status >= 300 && response.status < 400) {
@@ -354,12 +390,12 @@ async function downloadWithSafeRedirects(rawUrl) {
         throw new Error("Too many redirects");
       }
       // Re-validate the new URL before following it.
-      const redirectedUrl = new URL(location, currentUrl).toString();
-      currentUrl = await assertSafeDownloadUrl(redirectedUrl);
+      const redirectedUrl = new URL(location, currentTarget.url).toString();
+      currentTarget = await assertSafeDownloadUrl(redirectedUrl);
       continue;
     }
 
-    return { response, finalUrl: currentUrl };
+    return { response, finalUrl: currentTarget.url };
   }
 
   throw new Error("Too many redirects");

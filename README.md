@@ -86,6 +86,8 @@ curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
   "https://$DOMAIN/web-start/$SESSION"
 ```
 
+If `sessions/session-$SESSION` already exists, this resumes the saved WhatsApp auth after a container restart. You should not need to scan a new QR unless WhatsApp invalidated the linked session.
+
 2. Get QR (not paired yet) or live WhatsApp screenshot (already paired):
 
 ```bash
@@ -118,11 +120,11 @@ curl -X POST "https://$DOMAIN/send-file" \
   -d '{"session":"'"$SESSION"'","to":"15551234567","url":"https://example.com/file.pdf","filename":"file.pdf","caption":"Optional caption"}'
 ```
 
-6. Stop a session:
+6. Pause a session client:
 
 ```bash
 curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
-  "https://$DOMAIN/web-stop/$SESSION"
+  "https://$DOMAIN/web-pause/$SESSION"
 ```
 
 7. Access saved media file (public endpoint):
@@ -135,8 +137,8 @@ curl -I "https://$DOMAIN/files/<filename_from_webhook_or_send_file_response>"
 
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
-| `/web-start/:id` | `GET` | Basic Auth | Start/init session |
-| `/web-stop/:id` | `GET` | Basic Auth | Stop client (keeps auth) |
+| `/web-start/:id` | `GET` | Basic Auth | Start/init or resume saved session |
+| `/web-pause/:id` | `GET` | Basic Auth | Pause client (keeps auth) |
 | `/web-image/:id` | `GET` | Basic Auth | QR or live screenshot |
 | `/web-stats` | `GET` | Basic Auth | Session states |
 | `/send-text` | `POST` | `X-API-Key` | Send text message |
