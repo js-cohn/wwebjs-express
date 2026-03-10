@@ -19,6 +19,7 @@ const clients = {};
 // Stores QR codes for sessions pending authentication, keyed by session ID.
 const qrCodes = {};
 const SESSION_STATE_TIMEOUT_MS = 2000;
+const STARTUP_DIAGNOSTICS_POLL_MS = 1000;
 
 /**
  * Removes a client from in-memory state only if it is still the current client.
@@ -58,6 +59,57 @@ async function getClientStateWithTimeout(
 }
 
 /**
+ * Best-effort page URL lookup for diagnostics.
+ * @param {import('puppeteer-core').Page|undefined|null} page
+ * @returns {Promise<string|null>}
+ */
+async function getPageUrlSafe(page) {
+  if (!page) return null;
+  try {
+    return page.url() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Formats startup diagnostics as a compact log suffix.
+ * @param {Record<string, unknown>} diagnostics
+ * @returns {string}
+ */
+function formatStartupDiagnostics(diagnostics) {
+  const parts = [];
+  if (diagnostics.elapsedMs != null) {
+    parts.push(`elapsed=${diagnostics.elapsedMs}ms`);
+  }
+  if (diagnostics.lastState) {
+    parts.push(`state=${diagnostics.lastState}`);
+  }
+  if (diagnostics.lastLoadingPercent != null) {
+    parts.push(`loading=${diagnostics.lastLoadingPercent}%`);
+  }
+  if (diagnostics.hasBrowser) {
+    parts.push("browser=attached");
+  }
+  if (diagnostics.hasPage) {
+    parts.push("page=attached");
+  }
+  if (diagnostics.lastPageUrl) {
+    parts.push(`url=${diagnostics.lastPageUrl}`);
+  }
+  if (diagnostics.qrSeen) {
+    parts.push("qr=seen");
+  }
+  if (diagnostics.authenticated) {
+    parts.push("authenticated=yes");
+  }
+  if (diagnostics.ready) {
+    parts.push("ready=yes");
+  }
+  return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
+/**
  * Starts a new WhatsApp session.
  * This involves creating a client, setting up event listeners, and initializing the connection.
  * @param {string} sessionId - A unique identifier for the session.
@@ -65,6 +117,8 @@ async function getClientStateWithTimeout(
  */
 function startSession(sessionId) {
   if (clients[sessionId]) return false;
+
+  const sessionPath = path.join(SESSIONS_DIR, `session-${sessionId}`);
 
   const client = new Client({
     authStrategy: new LocalAuth({
@@ -89,6 +143,146 @@ function startSession(sessionId) {
   clients[sessionId] = client;
   let isCleaningUp = false;
   let hasAnnouncedReady = false;
+  const startupState = {
+    startedAt: Date.now(),
+    initializeCalledAt: null,
+    initializeResolvedAt: null,
+    qrSeenAt: null,
+    authenticatedAt: null,
+    readyAt: null,
+    lastState: null,
+    lastLoadingPercent: null,
+    lastPageUrl: null,
+    browserAttachedAt: null,
+    pageAttachedAt: null,
+    browserDisconnectedAt: null,
+  };
+  let startupDiagnosticsTimer = null;
+  let browserListenersAttached = false;
+  let pageListenersAttached = false;
+
+  function startupLog(message, details = null, level = "log") {
+    const suffix = formatStartupDiagnostics({
+      elapsedMs: Date.now() - startupState.startedAt,
+      lastState: startupState.lastState,
+      lastLoadingPercent: startupState.lastLoadingPercent,
+      hasBrowser: Boolean(client.pupBrowser),
+      hasPage: Boolean(client.pupPage),
+      lastPageUrl: startupState.lastPageUrl,
+      qrSeen: Boolean(startupState.qrSeenAt),
+      authenticated: Boolean(startupState.authenticatedAt),
+      ready: Boolean(startupState.readyAt),
+    });
+    const logger =
+      level === "warn"
+        ? console.warn
+        : level === "error"
+          ? console.error
+          : console.log;
+    if (details != null) {
+      logger(`[${sessionId}] ${message}${suffix}:`, details);
+    } else {
+      logger(`[${sessionId}] ${message}${suffix}`);
+    }
+  }
+
+  async function attachStartupDiagnostics() {
+    if (isCleaningUp || hasAnnouncedReady) return;
+
+    if (!browserListenersAttached && client.pupBrowser) {
+      browserListenersAttached = true;
+      startupState.browserAttachedAt = Date.now();
+      startupLog("Browser attached");
+      client.pupBrowser.on("disconnected", () => {
+        startupState.browserDisconnectedAt = Date.now();
+        startupLog("Browser disconnected", null, "warn");
+      });
+      client.pupBrowser.on("targetcreated", async (target) => {
+        if (target.type() === "page") {
+          startupLog(`Browser target created: ${target.type()}`);
+        }
+      });
+      client.pupBrowser.on("targetdestroyed", async (target) => {
+        if (target.type() === "page") {
+          startupLog(
+            `Browser target destroyed: ${target.type()}`,
+            null,
+            "warn",
+          );
+        }
+      });
+    }
+
+    if (!pageListenersAttached && client.pupPage) {
+      pageListenersAttached = true;
+      startupState.pageAttachedAt = Date.now();
+      startupState.lastPageUrl = await getPageUrlSafe(client.pupPage);
+      startupLog("Page attached");
+      client.pupPage.on("domcontentloaded", async () => {
+        startupState.lastPageUrl = await getPageUrlSafe(client.pupPage);
+        startupLog("Page DOMContentLoaded");
+      });
+      client.pupPage.on("load", async () => {
+        startupState.lastPageUrl = await getPageUrlSafe(client.pupPage);
+        startupLog("Page load");
+      });
+      client.pupPage.on("framenavigated", async (frame) => {
+        if (frame === client.pupPage.mainFrame()) {
+          startupState.lastPageUrl = await getPageUrlSafe(client.pupPage);
+          startupLog("Main frame navigated");
+        }
+      });
+      client.pupPage.on("pageerror", (error) => {
+        startupLog("Page error", error?.message || error, "warn");
+      });
+      client.pupPage.on("error", (error) => {
+        startupLog("Page crash/error", error?.message || error, "warn");
+      });
+      client.pupPage.on("close", () => {
+        startupLog("Page closed", null, "warn");
+      });
+      client.pupPage.on("console", (message) => {
+        if (message.type() === "error") {
+          startupLog(`Page console ${message.type()}`, message.text(), "warn");
+        }
+      });
+      client.pupPage.on("requestfailed", (request) => {
+        const failureText = request.failure()?.errorText || "unknown";
+        startupLog(
+          `Request failed: ${request.method()} ${request.url()} (${failureText})`,
+          null,
+          "warn",
+        );
+      });
+    }
+  }
+
+  function startStartupDiagnosticsLoop() {
+    attachStartupDiagnostics().catch((error) => {
+      startupLog(
+        "Startup diagnostics attach failed",
+        error?.message || error,
+        "warn",
+      );
+    });
+    startupDiagnosticsTimer = setInterval(() => {
+      attachStartupDiagnostics().catch((error) => {
+        startupLog(
+          "Startup diagnostics attach failed",
+          error?.message || error,
+          "warn",
+        );
+      });
+    }, STARTUP_DIAGNOSTICS_POLL_MS);
+    startupDiagnosticsTimer.unref?.();
+  }
+
+  function stopStartupDiagnosticsLoop() {
+    if (startupDiagnosticsTimer) {
+      clearInterval(startupDiagnosticsTimer);
+      startupDiagnosticsTimer = null;
+    }
+  }
 
   /**
    * Tears down a stuck/broken client so a fresh /web-start can be attempted.
@@ -100,10 +294,11 @@ function startSession(sessionId) {
     isCleaningUp = true;
 
     clearTimeout(watchdog);
+    stopStartupDiagnosticsLoop();
     if (error) {
-      console.error(`[${sessionId}] ${reason}:`, error);
+      startupLog(reason, error, "error");
     } else {
-      console.warn(`[${sessionId}] ${reason}`);
+      startupLog(reason, null, "warn");
     }
 
     try {
@@ -118,6 +313,8 @@ function startSession(sessionId) {
   // Watchdog to detect if browser startup is stuck.
   let watchdog = setTimeout(async () => {
     const state = await getClientStateWithTimeout(client);
+    startupState.lastState = state;
+    startupState.lastPageUrl = await getPageUrlSafe(client.pupPage);
     if (!state || state === "INITIALIZING" || state === "OFFLINE") {
       await cleanupFailedClient({
         reason:
@@ -128,14 +325,23 @@ function startSession(sessionId) {
 
   // --- Client Event Handlers ---
 
+  startupLog(
+    `Starting session initialization (saved auth ${fs.existsSync(sessionPath) ? "found" : "not found"})`,
+  );
+  startStartupDiagnosticsLoop();
+
   client.on("qr", (qr) => {
     qrCodes[sessionId] = qr;
+    startupState.qrSeenAt = Date.now();
+    startupLog(`QR received (length ${String(qr || "").length})`);
   });
 
   client.on("ready", () => {
     if (hasAnnouncedReady) return;
     hasAnnouncedReady = true;
+    startupState.readyAt = Date.now();
     clearTimeout(watchdog);
+    stopStartupDiagnosticsLoop();
     delete qrCodes[sessionId];
     console.log(`✅ [${sessionId}] WhatsApp is Ready`);
     postWebhook({
@@ -147,6 +353,8 @@ function startSession(sessionId) {
   });
 
   client.on("change_state", (state) => {
+    startupState.lastState = state || null;
+    startupLog(`State changed to ${state || "null"}`);
     postWebhook({
       event: "session",
       session: sessionId,
@@ -155,7 +363,18 @@ function startSession(sessionId) {
     });
   });
 
+  client.on("loading_screen", (percent, message) => {
+    startupState.lastLoadingPercent = percent ?? null;
+    startupLog(
+      `Loading screen ${percent ?? "?"}%${
+        message ? `: ${String(message).trim()}` : ""
+      }`,
+    );
+  });
+
   client.on("authenticated", () => {
+    startupState.authenticatedAt = Date.now();
+    startupLog("Authenticated event received");
     postWebhook({
       event: "session",
       session: sessionId,
@@ -164,6 +383,7 @@ function startSession(sessionId) {
   });
 
   client.on("auth_failure", (message) => {
+    startupLog("Auth failure", message || null, "warn");
     postWebhook({
       event: "session",
       session: sessionId,
@@ -174,7 +394,9 @@ function startSession(sessionId) {
 
   client.on("disconnected", (reason) => {
     clearTimeout(watchdog);
+    stopStartupDiagnosticsLoop();
     removeClientIfCurrent(sessionId, client);
+    startupLog("Disconnected event received", reason || null, "warn");
     postWebhook({
       event: "session",
       session: sessionId,
@@ -460,12 +682,23 @@ function startSession(sessionId) {
   });
 
   const tryInitialize = () => {
-    client.initialize().catch(async (err) => {
+    startupState.initializeCalledAt = Date.now();
+    startupLog("Calling client.initialize()");
+    const initPromise = client.initialize();
+    initPromise.catch(async (err) => {
       await cleanupFailedClient({
         reason: "Init error",
         error: err,
       });
     });
+    initPromise
+      .then(() => {
+        startupState.initializeResolvedAt = Date.now();
+        startupLog("client.initialize() promise resolved");
+      })
+      .catch(() => {
+        // The actual error path is handled by the primary catch above.
+      });
   };
 
   tryInitialize();
