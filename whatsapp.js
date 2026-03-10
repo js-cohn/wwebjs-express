@@ -142,6 +142,7 @@ function startSession(sessionId) {
 
   clients[sessionId] = client;
   let isCleaningUp = false;
+  let hasAnnouncedAuthenticated = false;
   let hasAnnouncedReady = false;
   const startupState = {
     startedAt: Date.now(),
@@ -393,6 +394,8 @@ function startSession(sessionId) {
   });
 
   client.on("authenticated", () => {
+    if (hasAnnouncedAuthenticated) return;
+    hasAnnouncedAuthenticated = true;
     startupState.authenticatedAt = Date.now();
     startupLog("Authenticated event received");
     postWebhook({
