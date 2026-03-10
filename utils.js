@@ -283,26 +283,35 @@ function isLocalHostname(hostname) {
 }
 
 /**
- * Pins outbound requests to a previously validated IP address.
+ * Pins outbound requests to a single validated IP address.
  * This avoids DNS rebinding between validation time and connect time.
- * @param {string} address - The validated IP address.
- * @param {4|6} family - The IP family.
+ * @param {{address: string, family: 4|6}} selectedAddress - Validated IP.
  * @returns {(hostname: string, options: object, callback: Function) => void}
  */
-function buildPinnedLookup(address, family) {
-  return (_hostname, _options, callback) => callback(null, address, family);
+function buildPinnedLookup(selectedAddress) {
+  return (_hostname, _options, callback) =>
+    callback(null, selectedAddress.address, selectedAddress.family);
 }
 
 /**
  * Builds request options that force axios/node to reuse the validated DNS result.
- * @param {ReturnType<typeof buildPinnedLookup>|null} lookup
- * @returns {{httpAgent?: import('http').Agent, httpsAgent?: import('https').Agent}}
+ * @param {{lookup: ReturnType<typeof buildPinnedLookup>, family: 4|6}|null} pin
+ * @returns {{httpAgent?: import('http').Agent, httpsAgent?: import('https').Agent, family?: 4|6}}
  */
-function buildPinnedRequestOptions(lookup) {
-  if (!lookup) return {};
+function buildPinnedRequestOptions(pin) {
+  if (!pin) return {};
   return {
-    httpAgent: new http.Agent({ lookup }),
-    httpsAgent: new https.Agent({ lookup }),
+    httpAgent: new http.Agent({
+      lookup: pin.lookup,
+      family: pin.family,
+      autoSelectFamily: false,
+    }),
+    httpsAgent: new https.Agent({
+      lookup: pin.lookup,
+      family: pin.family,
+      autoSelectFamily: false,
+    }),
+    family: pin.family,
   };
 }
 
@@ -310,8 +319,8 @@ function buildPinnedRequestOptions(lookup) {
  * Validates a URL to ensure it is safe to download from.
  * This is a critical security function to prevent Server-Side Request Forgery (SSRF).
  * @param {string} rawUrl - The URL to validate.
- * @returns {Promise<{url: string, lookup: ReturnType<typeof buildPinnedLookup>|null}>}
- * The validated URL and optional DNS lookup pinning for the eventual request.
+ * @returns {Promise<{url: string, pin: {lookup: ReturnType<typeof buildPinnedLookup>, family: 4|6}|null}>}
+ * The validated URL and optional DNS pinning for the eventual request.
  * @throws {Error} If the URL is invalid or points to a protected resource.
  */
 async function assertSafeDownloadUrl(rawUrl) {
@@ -339,7 +348,7 @@ async function assertSafeDownloadUrl(rawUrl) {
     if (isPrivateIpAddress(hostname)) {
       throw new Error("Private IP ranges are not allowed");
     }
-    return { url: parsed.toString(), lookup: null };
+    return { url: parsed.toString(), pin: null };
   }
 
   // 3. If it's a domain, resolve it and check all resulting IPs.
@@ -349,13 +358,14 @@ async function assertSafeDownloadUrl(rawUrl) {
     throw new Error("Resolved host is in a private IP range");
   }
 
-  const preferredAddress = resolved[0];
+  const selectedAddress =
+    resolved.find((entry) => entry.family === 4) || resolved[0];
   return {
     url: parsed.toString(),
-    lookup: buildPinnedLookup(
-      preferredAddress.address,
-      preferredAddress.family,
-    ),
+    pin: {
+      lookup: buildPinnedLookup(selectedAddress),
+      family: selectedAddress.family,
+    },
   };
 }
 
@@ -378,7 +388,7 @@ async function downloadWithSafeRedirects(rawUrl) {
       maxRedirects: 0, // We handle redirects manually.
       validateStatus: (status) =>
         (status >= 200 && status < 300) || (status >= 300 && status < 400),
-      ...buildPinnedRequestOptions(currentTarget.lookup),
+      ...buildPinnedRequestOptions(currentTarget.pin),
     });
 
     if (response.status >= 300 && response.status < 400) {
@@ -442,6 +452,9 @@ function classifySendFileError(error) {
       return { status: 504, error: "File download timed out" };
     }
     if (error.response?.status) {
+      return { status: 400, error: "Failed to download file from URL" };
+    }
+    if (error.request || error.code) {
       return { status: 400, error: "Failed to download file from URL" };
     }
   }
