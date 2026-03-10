@@ -315,6 +315,26 @@ function startSession(sessionId) {
     const state = await getClientStateWithTimeout(client);
     startupState.lastState = state;
     startupState.lastPageUrl = await getPageUrlSafe(client.pupPage);
+    if (
+      startupState.qrSeenAt &&
+      !startupState.authenticatedAt &&
+      !startupState.readyAt
+    ) {
+      startupLog(
+        "QR is available and awaiting scan; keeping session alive.",
+        null,
+        "warn",
+      );
+      return;
+    }
+    if (startupState.authenticatedAt && !startupState.readyAt) {
+      startupLog(
+        "Authenticated event received but READY has not fired yet; keeping session alive.",
+        null,
+        "warn",
+      );
+      return;
+    }
     if (!state || state === "INITIALIZING" || state === "OFFLINE") {
       await cleanupFailedClient({
         reason:
