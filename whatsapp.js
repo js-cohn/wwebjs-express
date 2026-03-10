@@ -20,6 +20,11 @@ const clients = {};
 const qrCodes = {};
 const SESSION_STATE_TIMEOUT_MS = 2000;
 const STARTUP_DIAGNOSTICS_POLL_MS = 1000;
+const IGNORED_SYSTEM_MESSAGE_TYPES = new Set([
+  "notification_template",
+  "e2e_notification",
+  "call_log",
+]);
 
 /**
  * Removes a client from in-memory state only if it is still the current client.
@@ -571,7 +576,10 @@ function startSession(sessionId) {
   // --- Message-related Event Handlers ---
 
   client.on("message", async (msg) => {
-    if (msg.from === "status@broadcast" || msg.type === "reaction") return;
+    if (msg.from === "status@broadcast") return;
+    // Reactions are emitted separately as normalized message events below.
+    if (msg.type === "reaction") return;
+    if (IGNORED_SYSTEM_MESSAGE_TYPES.has(msg.type)) return;
 
     const contactInfo = await resolveContactInfo(
       msg.author || msg.from,
