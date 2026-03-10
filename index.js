@@ -19,6 +19,28 @@ const SESSIONS_DIR = path.join(__dirname, "sessions");
 const PORT = process.env.PORT || 3000;
 const RESTORE_DELAY_MS = 8000;
 
+function isTransientBrowserError(errorLike) {
+  const message = String(errorLike?.message || errorLike || "");
+  return /Execution context was destroyed/i.test(message);
+}
+
+process.on("unhandledRejection", (reason) => {
+  if (isTransientBrowserError(reason)) {
+    console.error("Ignored transient browser rejection:", reason);
+    return;
+  }
+  console.error("Unhandled promise rejection:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  if (isTransientBrowserError(error)) {
+    console.error("Ignored transient browser exception:", error);
+    return;
+  }
+  console.error("Uncaught exception:", error);
+  process.exit(1);
+});
+
 // --- Directory Initialization ---
 // Ensure persistent storage directories exist.
 if (!fs.existsSync(FILES_DIR)) fs.mkdirSync(FILES_DIR);

@@ -76,6 +76,7 @@ function startSession(sessionId, options = {}) {
 
   clients[sessionId] = client;
   let isRecycling = false;
+  let hasAnnouncedReady = false;
 
   /**
    * Tears down a stuck/broken client and schedules a bounded retry when allowed.
@@ -151,6 +152,8 @@ function startSession(sessionId, options = {}) {
   });
 
   client.on("ready", () => {
+    if (hasAnnouncedReady) return;
+    hasAnnouncedReady = true;
     clearTimeout(watchdog);
     delete qrCodes[sessionId];
     if (initRetryTimers[sessionId]) {
