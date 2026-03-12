@@ -2,6 +2,7 @@ const axios = require("axios");
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
+const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
 const dns = require("dns").promises;
@@ -137,7 +138,7 @@ function runWhisperCpp(filePath, modelPath) {
   return new Promise((resolve, reject) => {
     execFile(
       WHISPER_CPP_MAIN,
-      ["-m", modelPath, "-f", filePath, "-otxt"], // -otxt outputs transcription to a .txt file
+      ["-m", modelPath, "-f", filePath, "-l", "auto", "-otxt"],
       {
         cwd: WHISPER_CPP_DIR,
         timeout: timeoutMs,
@@ -149,6 +150,36 @@ function runWhisperCpp(filePath, modelPath) {
           return reject(new Error(details || "Whisper execution failed"));
         }
         resolve({ stdout, stderr });
+      },
+    );
+  });
+}
+
+/**
+ * Converts an audio file into the WAV format whisper.cpp expects.
+ * @param {string} sourcePath - The original audio file path.
+ * @returns {Promise<{tempDir: string, wavPath: string}>} Temporary directory and converted WAV path.
+ */
+function convertAudioToWhisperWav(sourcePath) {
+  const timeoutMs = Math.max(1000, Math.floor(whisperTimeoutSeconds * 1000));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-"));
+  const wavPath = path.join(tempDir, "input.wav");
+
+  return new Promise((resolve, reject) => {
+    execFile(
+      "ffmpeg",
+      ["-y", "-i", sourcePath, "-ar", "16000", "-ac", "1", wavPath],
+      {
+        timeout: timeoutMs,
+        maxBuffer: 8 * 1024 * 1024,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const details = String(stderr || stdout || error.message).trim();
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          return reject(new Error(details || "Audio conversion failed"));
+        }
+        resolve({ tempDir, wavPath });
       },
     );
   });
@@ -172,9 +203,10 @@ async function transcribeAudio(filePath) {
     throw new Error(`Whisper model not found: ${modelPath}`);
   }
 
-  const txtOutputPath = `${filePath}.txt`;
+  const { tempDir, wavPath } = await convertAudioToWhisperWav(filePath);
+  const txtOutputPath = `${wavPath}.txt`;
   try {
-    await runWhisperCpp(filePath, modelPath);
+    await runWhisperCpp(wavPath, modelPath);
     if (!fs.existsSync(txtOutputPath)) {
       return ""; // No output file means transcription was likely silent.
     }
@@ -184,6 +216,7 @@ async function transcribeAudio(filePath) {
     if (fs.existsSync(txtOutputPath)) {
       fs.unlinkSync(txtOutputPath);
     }
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
