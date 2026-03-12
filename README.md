@@ -43,6 +43,7 @@ Minimum values you should set:
 - `BASIC_AUTH_USER`
 - `BASIC_AUTH_HASH`
 - `WHISPER_MODEL` (optional, defaults to `base`)
+- `WHISPER_TIMEOUT_SECONDS` (optional, defaults to `480`)
 
 4. Build/start the API:
 

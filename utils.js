@@ -23,7 +23,14 @@ const {
 const maxDownloadMb = Number(MAX_DOWNLOAD_MB) || 10;
 const downloadTimeoutSeconds = Number(DOWNLOAD_TIMEOUT_SECONDS) || 15;
 const configuredMaxRedirects = Number(MAX_DOWNLOAD_REDIRECTS);
-const whisperTimeoutSeconds = Number(WHISPER_TIMEOUT_SECONDS) || 90;
+const whisperModelName = WHISPER_MODEL || "base";
+const configuredWhisperTimeoutSeconds = Number(WHISPER_TIMEOUT_SECONDS);
+const minimumWhisperTimeoutSeconds = whisperModelName === "base" ? 480 : 90;
+const whisperTimeoutSeconds =
+  Number.isFinite(configuredWhisperTimeoutSeconds) &&
+  configuredWhisperTimeoutSeconds > 0
+    ? Math.max(configuredWhisperTimeoutSeconds, minimumWhisperTimeoutSeconds)
+    : minimumWhisperTimeoutSeconds;
 const maxDownloadSizeBytes = Math.max(
   1,
   Math.floor(maxDownloadMb * 1024 * 1024),
@@ -146,6 +153,13 @@ function runWhisperCpp(filePath, modelPath) {
       },
       (error, stdout, stderr) => {
         if (error) {
+          if (error.killed) {
+            return reject(
+              new Error(
+                `Whisper transcription timed out after ${whisperTimeoutSeconds}s`,
+              ),
+            );
+          }
           const details = String(stderr || stdout || error.message).trim();
           return reject(new Error(details || "Whisper execution failed"));
         }
@@ -175,6 +189,14 @@ function convertAudioToWhisperWav(sourcePath) {
       },
       (error, stdout, stderr) => {
         if (error) {
+          if (error.killed) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            return reject(
+              new Error(
+                `Audio conversion timed out after ${whisperTimeoutSeconds}s`,
+              ),
+            );
+          }
           const details = String(stderr || stdout || error.message).trim();
           fs.rmSync(tempDir, { recursive: true, force: true });
           return reject(new Error(details || "Audio conversion failed"));
@@ -191,7 +213,7 @@ function convertAudioToWhisperWav(sourcePath) {
  * @returns {Promise<string>} A promise that resolves with the transcription text.
  */
 async function transcribeAudio(filePath) {
-  const modelName = WHISPER_MODEL || "base";
+  const modelName = whisperModelName;
   const modelPath = getWhisperModelPath(modelName);
   if (!modelPath) {
     throw new Error(`Unsupported Whisper model: ${modelName}`);
