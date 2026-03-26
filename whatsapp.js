@@ -18,6 +18,8 @@ const FILES_DIR = path.join(__dirname, "files");
 const clients = {};
 // Stores QR codes for sessions pending authentication, keyed by session ID.
 const qrCodes = {};
+// Sessions that were explicitly paused and should replay unread chat messages after the next ready event.
+const resumeUnreadReplaySessions = new Set();
 const SESSION_STATE_TIMEOUT_MS = 2000;
 const STARTUP_DIAGNOSTICS_POLL_MS = 1000;
 const IGNORED_SYSTEM_MESSAGE_TYPES = new Set([
@@ -362,7 +364,7 @@ function startSession(sessionId) {
     startupLog(`QR received (length ${String(qr || "").length})`);
   });
 
-  client.on("ready", () => {
+  client.on("ready", async () => {
     if (hasAnnouncedReady) return;
     hasAnnouncedReady = true;
     startupState.readyAt = Date.now();
@@ -376,6 +378,18 @@ function startSession(sessionId) {
       type: "ready",
       state: "READY",
     });
+
+    if (resumeUnreadReplaySessions.has(sessionId)) {
+      resumeUnreadReplaySessions.delete(sessionId);
+      try {
+        await postLatestUnreadMessagesAfterResume();
+      } catch (error) {
+        console.error(
+          `[${sessionId}] Resume unread replay failed:`,
+          error.message,
+        );
+      }
+    }
   });
 
   client.on("change_state", (state) => {
@@ -575,7 +589,7 @@ function startSession(sessionId) {
 
   // --- Message-related Event Handlers ---
 
-  client.on("message", async (msg) => {
+  async function buildMessageWebhookPayload(msg, extraPayload = {}) {
     if (msg.from === "status@broadcast") return;
     // Reactions are emitted separately as normalized message events below.
     if (msg.type === "reaction") return;
@@ -586,7 +600,7 @@ function startSession(sessionId) {
       msg._data?.notifyName,
     );
 
-    let payload = {
+    const payload = {
       event: "message",
       session: sessionId,
       from: msg.from,
@@ -594,6 +608,7 @@ function startSession(sessionId) {
       type: msg.type,
       notifyName: contactInfo.notifyName,
       phoneNumber: contactInfo.phoneNumber,
+      ...extraPayload,
     };
 
     const downloadableTypes = [
@@ -643,6 +658,55 @@ function startSession(sessionId) {
       }
     }
 
+    return payload;
+  }
+
+  async function postLatestUnreadMessagesAfterResume() {
+    const chats = await client.getChats();
+    const unreadChats = chats.filter((chat) => Number(chat.unreadCount) > 0);
+
+    startupLog(
+      `Replaying latest unread messages from ${unreadChats.length} chats`,
+    );
+
+    for (const chat of unreadChats) {
+      try {
+        const unreadCount = Math.max(1, Number(chat.unreadCount) || 1);
+        const messages = await chat.fetchMessages({
+          fromMe: false,
+          limit: Math.min(unreadCount + 20, 100),
+        });
+        const latestUnreadMessage = messages
+          .slice()
+          .reverse()
+          .find(
+            (msg) =>
+              msg.from !== "status@broadcast" &&
+              msg.type !== "reaction" &&
+              !IGNORED_SYSTEM_MESSAGE_TYPES.has(msg.type),
+          );
+
+        if (!latestUnreadMessage) continue;
+
+        const payload = await buildMessageWebhookPayload(latestUnreadMessage, {
+          replayedAfterResume: true,
+          unreadCount,
+        });
+        if (payload) {
+          postWebhook(payload);
+        }
+      } catch (error) {
+        console.error(
+          `[${sessionId}] Failed unread replay for ${chat.id?._serialized || "unknown chat"}:`,
+          error.message,
+        );
+      }
+    }
+  }
+
+  client.on("message", async (msg) => {
+    const payload = await buildMessageWebhookPayload(msg);
+    if (!payload) return;
     postWebhook(payload);
   });
 
@@ -747,6 +811,12 @@ async function stopSession(sessionId, options = {}) {
   const { logout = false } = options;
   const client = clients[sessionId];
   if (!client) return false;
+
+  if (logout) {
+    resumeUnreadReplaySessions.delete(sessionId);
+  } else {
+    resumeUnreadReplaySessions.add(sessionId);
+  }
 
   try {
     if (logout) {
