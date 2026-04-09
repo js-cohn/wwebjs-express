@@ -603,6 +603,7 @@ function startSession(sessionId) {
     const payload = {
       event: "message",
       session: sessionId,
+      messageId: msg.id?._serialized || null,
       from: msg.from,
       body: msg.body,
       type: msg.type,
@@ -970,14 +971,19 @@ async function sendWithRecipientFallback(client, to, sendFn) {
  * @param {string} sessionId - The session to use.
  * @param {string} to - The recipient's ID (e.g., "1234567890" or "1234567890@c.us").
  * @param {string} text - The message text.
+ * @param {{messageRe?: string}} [options] - Optional send options.
  * @returns {Promise<true>}
  */
-async function sendMessage(sessionId, to, text) {
+async function sendMessage(sessionId, to, text, options = {}) {
   const client = getSession(sessionId);
   if (!client) throw new Error("Session not active");
+  const sendOptions = {};
+  if (options.messageRe) {
+    sendOptions.quotedMessageId = options.messageRe;
+  }
 
   await sendWithRecipientFallback(client, to, async (chatId) => {
-    await client.sendMessage(chatId, text);
+    await client.sendMessage(chatId, text, sendOptions);
   });
   return true;
 }
@@ -990,6 +996,7 @@ async function sendMessage(sessionId, to, text) {
  * @param {string} contentType - The MIME type of the file.
  * @param {string} inferredName - The filename to use.
  * @param {string} caption - An optional caption for the file.
+ * @param {{messageRe?: string}} [options] - Optional send options.
  * @returns {Promise<true>}
  */
 async function sendFile(
@@ -999,6 +1006,7 @@ async function sendFile(
   contentType,
   inferredName,
   caption,
+  options = {},
 ) {
   const client = getSession(sessionId);
   if (!client) throw new Error("Session not active");
@@ -1015,6 +1023,7 @@ async function sendFile(
     await client.sendMessage(chatId, media, {
       sendMediaAsDocument: true,
       caption: safeCaption,
+      ...(options.messageRe ? { quotedMessageId: options.messageRe } : {}),
     });
   });
   return true;

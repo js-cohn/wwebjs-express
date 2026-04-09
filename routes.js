@@ -128,7 +128,7 @@ router.get("/web-stats", async (req, res) => {
 /**
  * --- API Endpoint ---
  * Sends a text message.
- * @body {{session: string, to: string, text: string}}
+ * @body {{session: string, to: string, text: string, messageRe?: string}}
  * @returns {object} JSON response indicating success or failure.
  * 200: { success: true }
  * 400: Invalid request body.
@@ -136,7 +136,7 @@ router.get("/web-stats", async (req, res) => {
  * 500: Failed to send message.
  */
 router.post("/send-text", async (req, res) => {
-  const { session, to, text } = req.body || {};
+  const { session, to, text, messageRe } = req.body || {};
   if (typeof session !== "string" || !session.trim()) {
     return res.status(400).json({ error: "Invalid session" });
   }
@@ -146,12 +146,21 @@ router.post("/send-text", async (req, res) => {
   if (typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "Invalid text body" });
   }
+  if (
+    messageRe != null &&
+    (typeof messageRe !== "string" || !messageRe.trim())
+  ) {
+    return res.status(400).json({ error: "Invalid messageRe" });
+  }
 
   const sessionId = session.trim();
   const recipient = to.trim();
+  const messageReplyId = messageRe?.trim() || undefined;
 
   try {
-    await sendMessage(sessionId, recipient, text);
+    await sendMessage(sessionId, recipient, text, {
+      messageRe: messageReplyId,
+    });
     res.json({ success: true });
   } catch (e) {
     const message = e.message || "Failed to send message";
@@ -167,7 +176,7 @@ router.post("/send-text", async (req, res) => {
 /**
  * --- API Endpoint ---
  * Downloads a file from a URL and sends it as a message.
- * @body {{session: string, to: string, url: string, filename?: string, caption?: string}}
+ * @body {{session: string, to: string, url: string, filename?: string, caption?: string, messageRe?: string}}
  * @returns {object} JSON response indicating success or failure.
  * 200: { success: true, local_file: string }
  * 400: Invalid request body or unsafe URL.
@@ -177,7 +186,7 @@ router.post("/send-text", async (req, res) => {
  * 504: File download timed out.
  */
 router.post("/send-file", async (req, res) => {
-  const { session, to, url, filename, caption } = req.body || {};
+  const { session, to, url, filename, caption, messageRe } = req.body || {};
   if (typeof session !== "string" || !session.trim()) {
     return res.status(400).json({ error: "Invalid session" });
   }
@@ -189,7 +198,14 @@ router.post("/send-file", async (req, res) => {
     return res.status(400).json({ error: "Invalid file URL" });
   if (!to || typeof to !== "string" || !to.trim())
     return res.status(400).json({ error: "Invalid destination" });
+  if (
+    messageRe != null &&
+    (typeof messageRe !== "string" || !messageRe.trim())
+  ) {
+    return res.status(400).json({ error: "Invalid messageRe" });
+  }
   const recipient = to.trim();
+  const messageReplyId = messageRe?.trim() || undefined;
 
   try {
     // 1. Download the file with security checks.
@@ -222,6 +238,7 @@ router.post("/send-file", async (req, res) => {
       contentType,
       inferredName,
       caption,
+      { messageRe: messageReplyId },
     );
 
     // 4. (Optional) Save a local copy for access via /files/*

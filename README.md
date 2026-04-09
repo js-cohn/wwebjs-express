@@ -103,13 +103,13 @@ curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
   "https://$DOMAIN/web-stats"
 ```
 
-4. Send text (`text` is required):
+4. Send text (`text` is required, `messageRe` is optional for replies):
 
 ```bash
 curl -X POST "https://$DOMAIN/send-text" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"session":"'"$SESSION"'","to":"15551234567","text":"Hello from API"}'
+  -d '{"session":"'"$SESSION"'","to":"15551234567","text":"Hello from API","messageRe":"false_1234567890@c.us_ABCDEF1234567890"}'
 ```
 
 5. Send file by URL:
@@ -118,7 +118,7 @@ curl -X POST "https://$DOMAIN/send-text" \
 curl -X POST "https://$DOMAIN/send-file" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"session":"'"$SESSION"'","to":"15551234567","url":"https://example.com/file.pdf","filename":"file.pdf","caption":"Optional caption"}'
+  -d '{"session":"'"$SESSION"'","to":"15551234567","url":"https://example.com/file.pdf","filename":"file.pdf","caption":"Optional caption","messageRe":"false_1234567890@c.us_ABCDEF1234567890"}'
 ```
 
 6. Pause a session client:
@@ -156,6 +156,7 @@ Incoming events are POSTed to `WEBHOOK_URL`.
 {
   "event": "message",
   "session": "your_session_name",
+  "messageId": "false_15551234567@c.us_ABCDEF1234567890",
   "from": "15551234567@c.us",
   "body": "Hello",
   "type": "chat",
@@ -170,6 +171,7 @@ Incoming events are POSTed to `WEBHOOK_URL`.
 {
   "event": "message",
   "session": "your_session_name",
+  "messageId": "false_15551234567@c.us_ABCDEF1234567890",
   "from": "15551234567@c.us",
   "body": "filename.pdf",
   "type": "document",
@@ -219,6 +221,7 @@ Session `type` values:
 Additional webhook behavior:
 
 - `notifyName` and `phoneNumber` are best-effort and may be `null`.
+- `messageId` can be passed back as `messageRe` in `POST /send-text` or `POST /send-file` to send a WhatsApp reply in the same chat.
 - Reactions are de-duplicated before webhook delivery.
 - `audio` / `ptt` messages use whisper.cpp transcription; no speech becomes `[Inaudible Audio]`.
 - If transcription fails for `audio` / `ptt`, `body` becomes `[Transcription Failed]`.
