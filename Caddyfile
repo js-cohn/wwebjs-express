@@ -1,6 +1,9 @@
 # Use directly (`caddy run --config ...`) or import from a parent Caddyfile.
 # If imported, env placeholders below are still read from the Caddy service
 # process environment (not from Docker Compose automatically).
+# If you deploy from GHCR without cloning the whole repo, keep this file and
+# the app `.env` together in a small deploy directory (for example
+# `/opt/wwebjs-express/`) and point Caddy at those local paths.
 #
 # If placeholders are not resolving:
 # 1) Add your env file to systemd:

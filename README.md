@@ -7,15 +7,31 @@ Express API for `whatsapp-web.js`, intended to run behind stock Caddy.
 - Docker + Docker Compose
 - Caddy 2
 
+You do not need a full source checkout on the server when deploying from GHCR.
+The minimum deployment directory is:
+
+- `docker-compose.yml`
+- `Caddyfile`
+- `.env`
+
+Do not copy `docker-compose.override.yml` into that GHCR deployment directory.
+That file is for local source-mounted development.
+
+That directory will also hold the persistent `sessions/` and `files/` volumes.
+
 ## Setup
 
-1. Create your env file:
+1. Create a small deployment directory and place `docker-compose.yml`,
+   `Caddyfile`, and `.env.example` in it if you are deploying from GHCR
+   instead of cloning the whole repo.
+
+2. Create your env file:
 
 ```bash
 cp .env.example .env
 ```
 
-2. Generate secrets:
+3. Generate secrets:
 
 ```bash
 # API key (for /send-* endpoints)
@@ -26,10 +42,11 @@ caddy hash-password --plaintext 'your_password'
 # or: docker run --rm caddy:2 caddy hash-password --plaintext 'your_password'
 ```
 
-3. Update `.env`.
+4. Update `.env`.
 
 Minimum values you should set:
 
+- `WWEBJS_IMAGE`
 - `DOMAIN`
 - `PORT`
 - `WEBHOOK_URL`
@@ -40,13 +57,14 @@ Minimum values you should set:
 - `WHISPER_MODEL` (optional, defaults to `base`)
 - `WHISPER_TIMEOUT_SECONDS` (optional, defaults to `480`)
 
-4. Build/start the API:
+5. Pull/start the API:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-5. Load Caddy config:
+6. Load Caddy config:
 
 - Direct use:
 
@@ -62,6 +80,13 @@ import /absolute/path/to/wwebjs-express/Caddyfile
 ```
 
 Notes about env/import behavior are kept in comments inside `Caddyfile` and `docker-compose.yml`.
+
+If you are using the GHCR deployment route with host Caddy:
+
+- keep `docker-compose.yml`, `Caddyfile`, and `.env` together in a stable path
+  such as `/opt/wwebjs-express/`
+- point Caddy's `EnvironmentFile` at that `.env`
+- import or validate/reload that local `Caddyfile`
 
 The app now enforces the `/web-*` and `/send-*` rate limits itself, so `xcaddy`
 and the `caddy-ratelimit` plugin are no longer required.
