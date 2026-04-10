@@ -21,6 +21,74 @@ const {
 
 const router = express.Router();
 const FILES_DIR = path.join(__dirname, "files");
+const WEB_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+const WEB_RATE_LIMIT_MAX = 50;
+const SEND_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const SEND_RATE_LIMIT_MAX = 1000;
+
+/**
+ * Lightweight in-memory sliding-window rate limiter.
+ * This preserves the old Caddy plugin behavior without requiring xcaddy.
+ * @param {{windowMs: number, max: number, onLimit: import('express').RequestHandler}} options
+ * @returns {import('express').RequestHandler}
+ */
+function createRateLimiter({ windowMs, max, onLimit }) {
+  const buckets = new Map();
+
+  return (req, res, next) => {
+    const key = req.ip || req.socket?.remoteAddress || "unknown";
+    const now = Date.now();
+    const windowStart = now - windowMs;
+    const history = buckets.get(key) || [];
+    const active = history.filter((timestamp) => timestamp > windowStart);
+
+    if (active.length >= max) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((active[0] + windowMs - now) / 1000),
+      );
+      res.set("Retry-After", String(retryAfterSeconds));
+      return onLimit(req, res, next);
+    }
+
+    active.push(now);
+    buckets.set(key, active);
+
+    if (active.length === 1) {
+      setTimeout(() => {
+        const existing = buckets.get(key);
+        if (!existing) return;
+        const freshWindowStart = Date.now() - windowMs;
+        const remaining = existing.filter(
+          (timestamp) => timestamp > freshWindowStart,
+        );
+        if (remaining.length) {
+          buckets.set(key, remaining);
+        } else {
+          buckets.delete(key);
+        }
+      }, windowMs).unref?.();
+    }
+
+    next();
+  };
+}
+
+const webRateLimiter = createRateLimiter({
+  windowMs: WEB_RATE_LIMIT_WINDOW_MS,
+  max: WEB_RATE_LIMIT_MAX,
+  onLimit: (_req, res) => res.status(429).send("Too Many Requests"),
+});
+
+const sendRateLimiter = createRateLimiter({
+  windowMs: SEND_RATE_LIMIT_WINDOW_MS,
+  max: SEND_RATE_LIMIT_MAX,
+  onLimit: (_req, res) =>
+    res.status(429).json({ error: "Rate limit exceeded" }),
+});
+
+router.use(/^\/web-/, webRateLimiter);
+router.use(/^\/send-/, sendRateLimiter);
 
 /**
  * Escapes user-controlled text before embedding into HTML responses.

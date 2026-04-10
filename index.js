@@ -7,6 +7,14 @@ const path = require("path");
 const routes = require("./routes");
 
 const app = express();
+const configuredTrustProxyHops = Number(process.env.TRUST_PROXY_HOPS);
+const trustProxyHops = Number.isFinite(configuredTrustProxyHops)
+  ? Math.max(0, Math.floor(configuredTrustProxyHops))
+  : 1;
+
+// This app is intended to sit behind Caddy. Trust one proxy hop by default so
+// req.ip reflects the original client and app-level rate limits work correctly.
+app.set("trust proxy", trustProxyHops);
 
 // --- Global Middleware ---
 // Parse incoming JSON requests.

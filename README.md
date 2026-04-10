@@ -1,17 +1,11 @@
 # wwebjs-express
 
-Express API for `whatsapp-web.js`, intended to run behind Caddy.
+Express API for `whatsapp-web.js`, intended to run behind stock Caddy.
 
 ## Prerequisites
 
 - Docker + Docker Compose
-- Caddy with `caddy-ratelimit`
-
-Build Caddy with:
-
-```bash
-xcaddy build --with github.com/mholt/caddy-ratelimit
-```
+- Caddy 2
 
 ## Setup
 
@@ -42,6 +36,7 @@ Minimum values you should set:
 - `API_KEY`
 - `BASIC_AUTH_USER`
 - `BASIC_AUTH_HASH`
+- `TRUST_PROXY_HOPS` (optional, defaults to `1`)
 - `WHISPER_MODEL` (optional, defaults to `base`)
 - `WHISPER_TIMEOUT_SECONDS` (optional, defaults to `480`)
 
@@ -67,6 +62,9 @@ import /absolute/path/to/wwebjs-express/Caddyfile
 ```
 
 Notes about env/import behavior are kept in comments inside `Caddyfile` and `docker-compose.yml`.
+
+The app now enforces the `/web-*` and `/send-*` rate limits itself, so `xcaddy`
+and the `caddy-ratelimit` plugin are no longer required.
 
 ## Usage
 
