@@ -252,3 +252,9 @@ Additional webhook behavior:
 
 - `sessions/` stores WhatsApp auth/session data.
 - `files/` stores downloaded/saved media files.
+
+To prevent the `files/` directory from growing indefinitely, you can use a cron job to delete old files. For example, to delete files older than 30 days every night at 2 AM:
+
+```bash
+0 2 * * * find /absolute/path/to/wwebjs-express/files -type f -mtime +30 -delete
+```
