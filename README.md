@@ -10,9 +10,9 @@ Express API for `whatsapp-web.js`, intended to run behind stock Caddy.
 You do not need a full source checkout on the server when deploying from GHCR.
 The minimum deployment directory is:
 
-- `docker-compose.yml`
-- `Caddyfile`
 - `.env`
+- `Caddyfile`
+- `docker-compose.yml`
 
 Do not copy `docker-compose.override.yml` into that GHCR deployment directory.
 That file is for local source-mounted development.
