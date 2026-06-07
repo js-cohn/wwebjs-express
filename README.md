@@ -34,12 +34,12 @@ cp .env.example .env
 3. Generate secrets:
 
 ```bash
-# API key (for /send-* endpoints)
-openssl rand -hex 32
-
 # Basic auth hash (for /web-* endpoints)
 caddy hash-password --plaintext 'your_password'
 # or: docker run --rm caddy:2 caddy hash-password --plaintext 'your_password'
+
+# API key (for /send-* endpoints)
+openssl rand -hex 32
 ```
 
 4. Update `.env`.
