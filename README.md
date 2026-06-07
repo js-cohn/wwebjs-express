@@ -88,9 +88,6 @@ If you are using the GHCR deployment route with host Caddy:
 - point Caddy's `EnvironmentFile` at that `.env`
 - import or validate/reload that local `Caddyfile`
 
-The app now enforces the `/web-*` and `/send-*` rate limits itself, so `xcaddy`
-and the `caddy-ratelimit` plugin are no longer required.
-
 ## Usage
 
 Set local shell vars used in examples:
