@@ -1,21 +1,20 @@
+# To include this in a parent docker-compose.yml:
+# include:
+#   - /path/to/wwebjs-express/docker-compose.yml
+
 services:
-  wwebjs-api:
+  wwebjs-express:
     # GHCR deployment: point WWEBJS_IMAGE at your published image tag.
-    # If you cloned the repo and want source-mounted local development, see
-    # docker-compose.override.yml.
+    # If you cloned the repo and want source-mounted local development,
+    # see docker-compose.override.yml.
     image: ${WWEBJS_IMAGE:-ghcr.io/js-cohn/wwebjs-express:latest}
     container_name: ${WWEBJS_CONTAINER_NAME:-wwebjs-express}
-    restart: unless-stopped
     env_file:
       - ${WWEBJS_ROOT:-.}/.env
     ports:
       - "${WWEBJS_BIND_IP:-127.0.0.1}:${PORT:-3000}:${PORT:-3000}"
+    restart: unless-stopped
+    shm_size: "2gb"
     volumes:
       - ${WWEBJS_ROOT:-.}/sessions:/app/sessions
       - ${WWEBJS_ROOT:-.}/files:/app/files
-    mem_limit: 1024m
-    shm_size: "512mb"
-    deploy:
-      resources:
-        limits:
-          memory: 1024M
