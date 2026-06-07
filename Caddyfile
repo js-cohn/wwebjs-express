@@ -16,8 +16,10 @@
 #      sudo systemctl show caddy -p EnvironmentFiles
 #      pid=$(pgrep -x caddy | head -n1)
 #      sudo sh -c "tr '\0' '\n' < /proc/$pid/environ | grep -E '^(DOMAIN|PORT|WWEBJS_UPSTREAM_HOST|BASIC_AUTH_USER|BASIC_AUTH_HASH|API_KEY)='"
+
 (upstream) {
-    reverse_proxy {$WWEBJS_UPSTREAM_HOST:localhost}:{$PORT:3003} {
+    # Defaulting to 3000 to match the project's Docker defaults
+    reverse_proxy {$WWEBJS_UPSTREAM_HOST:localhost}:{$PORT:3000} {
         transport http {
             dial_timeout 5s
             response_header_timeout 30s
@@ -28,13 +30,18 @@
 }
 
 {$DOMAIN:localhost} {
+    # Auth for web interface
+    # Moved to site-level for maximum compatibility across Caddy versions
+    @web_path path /web-*
+    basicauth @web_path {
+        {$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+    }
+
     # Public access to media files.
     # Express handles this route and disables directory browsing natively.
     @files path /files/*
     handle @files {
-        @files_bad_method {
-            not method GET HEAD
-        }
+        @files_bad_method not method GET HEAD
         respond @files_bad_method "Method Not Allowed" 405
         import upstream
     }
@@ -42,32 +49,22 @@
     # /web-* rate limiting is enforced by the Express app.
     @web path /web-*
     handle @web {
-        @web_bad_method {
-            not method GET
-        }
+        @web_bad_method not method GET
         respond @web_bad_method "Method Not Allowed" 405
-
-        basic_auth {
-            {$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-        }
         import upstream
     }
 
     # /send-* rate limiting is enforced by the Express app.
     @send path /send-*
     handle @send {
-        @send_bad_method {
-            not method POST
-        }
+        @send_bad_method not method POST
         respond @send_bad_method "Method Not Allowed" 405
 
         request_body {
             max_size 64KB
         }
 
-        @unauthorized {
-            not header X-API-Key "{$API_KEY}"
-        }
+        @unauthorized not header X-API-Key "{$API_KEY}"
         respond @unauthorized "Unauthorized" 401
 
         import upstream
