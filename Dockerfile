@@ -31,8 +31,11 @@ COPY package*.json ./
 RUN npm install
 
 # Build whisper.cpp and pre-download the default base model.
-# Note: UNAME flags are passed to prevent 'target specific option mismatch' on ARM64 GH Actions
-RUN cd node_modules/whisper-node/lib/whisper.cpp && make UNAME_M=aarch64 UNAME_P=aarch64
+# We strip '-mcpu=native' because it breaks multi-platform builds in GitHub Actions
+RUN cd node_modules/whisper-node/lib/whisper.cpp && \
+    sed -i 's/-mcpu=native//g' Makefile && \
+    make -j$(nproc)
+
 RUN cd node_modules/whisper-node/lib/whisper.cpp/models \
     && ./download-ggml-model.sh base \
     && test -s ggml-base.bin
