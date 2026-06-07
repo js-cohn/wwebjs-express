@@ -479,18 +479,38 @@ function startSession(sessionId) {
   /**
    * Attempts to find a phone number from various fields of a contact object.
    */
-  function getContactPhoneNumber(contact, fromId) {
+  async function getContactPhoneNumber(contact, fromId) {
+    if (!contact) return null;
+
+    const isLid = contact.id?.server === "lid";
+    const lidUser = isLid ? contact.id.user : null;
+
     const directCandidates = [
-      contact?.number,
-      contact?.id?.user,
-      contact?.phoneNumber,
+      contact.number,
+      contact.id?.user,
+      contact.phoneNumber,
     ];
+
     for (const candidate of directCandidates) {
       const parsed = normalizePhoneNumber(candidate);
-      if (parsed) return parsed;
+      if (parsed) {
+        if (isLid && parsed === lidUser) continue;
+        return parsed;
+      }
     }
 
-    const idCandidates = [contact?.id?._serialized, fromId];
+    // For LID contacts, try to get the linked phone number via getFormattedNumber.
+    if (isLid) {
+      try {
+        const formatted = await contact.getFormattedNumber();
+        const parsed = normalizePhoneNumber(formatted);
+        if (parsed && parsed !== lidUser) return parsed;
+      } catch {
+        // ignore
+      }
+    }
+
+    const idCandidates = [contact.id?._serialized, fromId];
     for (const candidate of idCandidates) {
       const parsed = getNumberFromSerializedId(candidate);
       if (parsed) return parsed;
@@ -533,7 +553,7 @@ function startSession(sessionId) {
         contact?.shortName ||
         contact?.formattedName ||
         null;
-      const phoneNumber = getContactPhoneNumber(contact, contactId);
+      const phoneNumber = await getContactPhoneNumber(contact, contactId);
       const resolved = {
         notifyName,
         phoneNumber: phoneNumber || fallbackPhoneNumber,
