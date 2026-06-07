@@ -567,24 +567,48 @@ function startSession(sessionId) {
       };
     }
 
+    const resolveWithTimeout = async () => {
+      let timer;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Resolution timeout")), 5000);
+        timer.unref?.();
+      });
+
+      try {
+        const result = await Promise.race([
+          (async () => {
+            const contact = await client.getContactById(contactId);
+            const notifyName =
+              fallbackName ||
+              contact?.pushname ||
+              contact?.name ||
+              contact?.shortName ||
+              contact?.formattedName ||
+              null;
+            const phoneNumber = await getContactPhoneNumber(contact, contactId);
+            return { notifyName, phoneNumber };
+          })(),
+          timeoutPromise,
+        ]);
+        return result;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
     try {
-      const contact = await client.getContactById(contactId);
-      const notifyName =
-        fallbackName ||
-        contact?.pushname ||
-        contact?.name ||
-        contact?.shortName ||
-        contact?.formattedName ||
-        null;
-      const phoneNumber = await getContactPhoneNumber(contact, contactId);
+      const { notifyName, phoneNumber } = await resolveWithTimeout();
       const resolved = {
         notifyName,
         phoneNumber: phoneNumber || fallbackPhoneNumber,
       };
       contactInfoCache.set(contactId, { ...resolved, at: now });
       return resolved;
-    } catch {
-      // On failure, cache the fallback to prevent repeated failed lookups.
+    } catch (e) {
+      if (e.message !== "Resolution timeout") {
+        console.error(`[${sessionId}] Contact resolution failed:`, e.message);
+      }
+      // On failure or timeout, cache the fallback to prevent repeated failed lookups.
       const fallbackResolved = {
         notifyName: fallbackName,
         phoneNumber: fallbackPhoneNumber,
@@ -754,9 +778,13 @@ function startSession(sessionId) {
   }
 
   client.on("message", async (msg) => {
-    const payload = await buildMessageWebhookPayload(msg);
-    if (!payload) return;
-    postWebhook(payload);
+    try {
+      const payload = await buildMessageWebhookPayload(msg);
+      if (!payload) return;
+      postWebhook(payload);
+    } catch (error) {
+      console.error(`[${sessionId}] Message handler error:`, error.message);
+    }
   });
 
   client.on("message_reaction", async (reaction) => {
