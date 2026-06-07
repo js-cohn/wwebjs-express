@@ -463,8 +463,22 @@ function startSession(sessionId) {
    */
   function getNumberFromSerializedId(serializedId) {
     if (typeof serializedId !== "string") return null;
-    const match = serializedId.trim().match(/^(\d+)@(c\.us|s\.whatsapp\.net)$/);
-    return match ? match[1] : null;
+    const match = serializedId
+      .trim()
+      .match(/^(\d+)@(c\.us|s\.whatsapp\.net|lid)$/);
+    if (!match) return null;
+
+    const user = match[1];
+    const server = match[2];
+
+    // If it's a LID, only return it if it looks like a phone number (e.g. 7-15 digits, not starting with '15')
+    // Actually, LIDs are usually 15 digits starting with '1'.
+    // A better way is to just NOT return it if it's the 15-digit LID pattern.
+    if (server === "lid" && user.length === 15 && user.startsWith("1")) {
+      return null;
+    }
+
+    return user;
   }
 
   /**
@@ -473,7 +487,14 @@ function startSession(sessionId) {
   function normalizePhoneNumber(value) {
     if (typeof value !== "string" && typeof value !== "number") return null;
     const digits = String(value).replace(/\D/g, "");
-    return digits || null;
+    if (!digits) return null;
+
+    // Exclude the 15-digit LID pattern from being considered a "phone number"
+    if (digits.length === 15 && digits.startsWith("1")) {
+      return null;
+    }
+
+    return digits;
   }
 
   /**
@@ -482,8 +503,11 @@ function startSession(sessionId) {
   async function getContactPhoneNumber(contact, fromId) {
     if (!contact) return null;
 
-    const isLid = contact.id?.server === "lid";
-    const lidUser = isLid ? contact.id.user : null;
+    const isLid =
+      contact.id?.server === "lid" || String(fromId).endsWith("@lid");
+    const lidUser = isLid
+      ? contact.id?.user || String(fromId).split("@")[0]
+      : null;
 
     const directCandidates = [
       contact.number,
@@ -500,14 +524,13 @@ function startSession(sessionId) {
     }
 
     // For LID contacts, try to get the linked phone number via getFormattedNumber.
-    if (isLid) {
-      try {
-        const formatted = await contact.getFormattedNumber();
-        const parsed = normalizePhoneNumber(formatted);
-        if (parsed && parsed !== lidUser) return parsed;
-      } catch {
-        // ignore
-      }
+    // This is the most reliable way to get the real phone number for a LID.
+    try {
+      const formatted = await contact.getFormattedNumber();
+      const parsed = normalizePhoneNumber(formatted);
+      if (parsed && parsed !== lidUser) return parsed;
+    } catch {
+      // ignore
     }
 
     const idCandidates = [contact.id?._serialized, fromId];
@@ -615,8 +638,9 @@ function startSession(sessionId) {
     if (msg.type === "reaction") return;
     if (IGNORED_SYSTEM_MESSAGE_TYPES.has(msg.type)) return;
 
+    const contactId = msg.author || msg.from;
     const contactInfo = await resolveContactInfo(
-      msg.author || msg.from,
+      contactId,
       msg._data?.notifyName,
     );
 
@@ -629,6 +653,10 @@ function startSession(sessionId) {
       type: msg.type,
       notifyName: contactInfo.notifyName,
       phoneNumber: contactInfo.phoneNumber,
+      _debug: {
+        resolvedFrom: contactId,
+        hasContact: !!contactInfo.phoneNumber,
+      },
       ...extraPayload,
     };
 
