@@ -471,10 +471,8 @@ function startSession(sessionId) {
     const user = match[1];
     const server = match[2];
 
-    // If it's a LID, only return it if it looks like a phone number (e.g. 7-15 digits, not starting with '15')
-    // Actually, LIDs are usually 15 digits starting with '1'.
-    // A better way is to just NOT return it if it's the 15-digit LID pattern.
-    if (server === "lid" && user.length === 15 && user.startsWith("1")) {
+    // If it's a LID, the numeric part is an internal identifier, not a phone number.
+    if (server === "lid") {
       return null;
     }
 
@@ -487,14 +485,7 @@ function startSession(sessionId) {
   function normalizePhoneNumber(value) {
     if (typeof value !== "string" && typeof value !== "number") return null;
     const digits = String(value).replace(/\D/g, "");
-    if (!digits) return null;
-
-    // Exclude the 15-digit LID pattern from being considered a "phone number"
-    if (digits.length === 15 && digits.startsWith("1")) {
-      return null;
-    }
-
-    return digits;
+    return digits || null;
   }
 
   /**
@@ -570,7 +561,10 @@ function startSession(sessionId) {
     const resolveWithTimeout = async () => {
       let timer;
       const timeoutPromise = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Resolution timeout")), 5000);
+        timer = setTimeout(
+          () => reject(new Error("Resolution timeout")),
+          10000,
+        );
         timer.unref?.();
       });
 
