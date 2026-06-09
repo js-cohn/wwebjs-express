@@ -13,9 +13,11 @@
 ## Critical Implementation Details
 - **Session Lifecycle:** Managed in `wwebjs-express/whatsapp.js`.
 - **Stability Fixes (Applied June 2026):**
-  - **Robust Watchdog:** A recurring watchdog with a 5-minute strict timeout for the `READY` event to prevent "zombie" authenticated-but-not-connected sessions.
+  - **Robust Watchdog:** A recurring watchdog with a 5-minute strict timeout for the `READY` event to prevent "zombie" authenticated-but-connected sessions.
   - **Web Version Locking:** Uses `webVersionCache` with a remote path to a known-stable WhatsApp Web version (`2.2412.54`).
   - **Docker Stability:** Puppeteer launched with `--disable-site-isolation-trials` and `--no-zygote` to prevent storage persistence hangs.
+  - **Enhanced Webhook Diagnostics:** `postWebhook` now logs explicit success (HTTP status) and detailed failure reasons (status codes + response body) to help diagnose silent delivery failures.
+
 - **Media Handling:** Incoming `ptt` (voice notes) and `audio` are automatically transcribed using Whisper.cpp before being forwarded to the webhook.
 
 ## API Endpoints
