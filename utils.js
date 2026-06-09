@@ -129,7 +129,16 @@ function postWebhook(payload, errorPrefix = "Webhook relay failed") {
   console.log(`📡 Sending webhook: ${eventDesc}`);
   axios
     .post(WEBHOOK_URL, payload)
-    .catch((err) => console.error(`${errorPrefix}: ${err.message}`));
+    .then((res) => {
+      console.log(`✅ Webhook delivered: ${eventDesc} (Status: ${res.status})`);
+    })
+    .catch((err) => {
+      const status = err.response ? ` (Status: ${err.response.status})` : "";
+      const details = err.response?.data
+        ? ` - ${JSON.stringify(err.response.data)}`
+        : "";
+      console.error(`${errorPrefix}: ${err.message}${status}${details}`);
+    });
 }
 
 /**
