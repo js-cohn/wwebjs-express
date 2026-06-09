@@ -530,6 +530,11 @@ function startSession(sessionId) {
       ? contact.id?.user || String(fromId).split("@")[0]
       : null;
 
+    if (isLid) {
+      console.log(`[DEBUG-LID] Processing LID contact: ${fromId}`);
+      console.log(`[DEBUG-LID] lidUser: ${lidUser}`);
+    }
+
     const directCandidates = [
       contact.number,
       contact.id?.user,
@@ -539,28 +544,51 @@ function startSession(sessionId) {
     for (const candidate of directCandidates) {
       const parsed = normalizePhoneNumber(candidate);
       if (parsed) {
-        if (isLid && parsed === lidUser) continue;
+        if (isLid && parsed === lidUser) {
+          console.log(
+            `[DEBUG-LID] Skipping candidate ${candidate} because it matches lidUser`,
+          );
+          continue;
+        }
+        if (isLid) {
+          console.log(
+            `[DEBUG-LID] Found non-LID candidate: ${parsed} (from ${candidate})`,
+          );
+        }
         return parsed;
       }
     }
 
     // For LID contacts, try to get the linked phone number via getFormattedNumber.
-    // This is the most reliable way to get the real phone number for a LID.
     try {
       const formatted = await contact.getFormattedNumber();
       const parsed = normalizePhoneNumber(formatted);
-      if (parsed && parsed !== lidUser) return parsed;
-    } catch {
-      // ignore
+      if (parsed) {
+        if (isLid && parsed === lidUser) {
+          console.log(
+            `[DEBUG-LID] Skipping formatted number ${formatted} because it matches lidUser`,
+          );
+        } else {
+          if (isLid)
+            console.log(`[DEBUG-LID] Found formatted candidate: ${parsed}`);
+          return parsed;
+        }
+      }
+    } catch (e) {
+      if (isLid)
+        console.log(`[DEBUG-LID] getFormattedNumber failed: ${e.message}`);
     }
 
     const idCandidates = [contact.id?._serialized, fromId];
     for (const candidate of idCandidates) {
       const parsed = getNumberFromSerializedId(candidate);
-      if (parsed) return parsed;
+      if (parsed) {
+        if (isLid) console.log(`[DEBUG-LID] Found ID candidate: ${parsed}`);
+        return parsed;
+      }
     }
 
-    // Explicitly do not return the numeric part of a LID as a phone number.
+    if (isLid) console.log(`[DEBUG-LID] No real phone number found for LID`);
     return null;
   }
 
