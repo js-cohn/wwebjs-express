@@ -560,6 +560,7 @@ function startSession(sessionId) {
       if (parsed) return parsed;
     }
 
+    // Explicitly do not return the numeric part of a LID as a phone number.
     return null;
   }
 
@@ -624,7 +625,7 @@ function startSession(sessionId) {
       const { notifyName, phoneNumber } = await resolveWithTimeout();
       const resolved = {
         notifyName,
-        phoneNumber: phoneNumber || fallbackPhoneNumber,
+        phoneNumber: phoneNumber, // Do NOT fall back to fallbackPhoneNumber if resolution failed to find a real number
       };
       contactInfoCache.set(contactId, { ...resolved, at: now });
       return resolved;
@@ -632,10 +633,10 @@ function startSession(sessionId) {
       if (e.message !== "Resolution timeout") {
         console.error(`[${sessionId}] Contact resolution failed:`, e.message);
       }
-      // On failure or timeout, cache the fallback to prevent repeated failed lookups.
+      // On failure or timeout, cache the results without the LID-based fallback phoneNumber.
       const fallbackResolved = {
         notifyName: fallbackName,
-        phoneNumber: fallbackPhoneNumber,
+        phoneNumber: null,
       };
       contactInfoCache.set(contactId, { ...fallbackResolved, at: now });
       return fallbackResolved;

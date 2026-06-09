@@ -17,6 +17,7 @@
   - **Web Version Locking:** Uses `webVersionCache` with a remote path to a known-stable WhatsApp Web version (`2.2412.54`).
   - **Docker Stability:** Puppeteer launched with `--disable-site-isolation-trials` and `--no-zygote` to prevent storage persistence hangs.
   - **Enhanced Webhook Diagnostics:** `postWebhook` now logs explicit success (HTTP status) and detailed failure reasons (status codes + response body) to help diagnose silent delivery failures.
+  - **LID Phone Number Fix:** Fixed logic that incorrectly reported the numeric part of a WhatsApp LID as a `phoneNumber`. The system now correctly distinguishes between real phone numbers and internal LIDs.
 
 - **Media Handling:** Incoming `ptt` (voice notes) and `audio` are automatically transcribed using Whisper.cpp before being forwarded to the webhook.
 
