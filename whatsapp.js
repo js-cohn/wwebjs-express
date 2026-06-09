@@ -578,14 +578,13 @@ function startSession(sessionId) {
     }
 
     const contactId = from.trim();
-    const fallbackPhoneNumber = getNumberFromSerializedId(contactId);
-
     const now = Date.now();
     const cached = contactInfoCache.get(contactId);
+
     if (cached && now - cached.at <= contactInfoCacheTtlMs) {
       return {
         notifyName: fallbackName || cached.notifyName,
-        phoneNumber: cached.phoneNumber || fallbackPhoneNumber,
+        phoneNumber: cached.phoneNumber || null,
       };
     }
 
@@ -623,21 +622,14 @@ function startSession(sessionId) {
 
     try {
       const { notifyName, phoneNumber } = await resolveWithTimeout();
-      const resolved = {
-        notifyName,
-        phoneNumber: phoneNumber, // Do NOT fall back to fallbackPhoneNumber if resolution failed to find a real number
-      };
+      const resolved = { notifyName, phoneNumber: phoneNumber || null };
       contactInfoCache.set(contactId, { ...resolved, at: now });
       return resolved;
     } catch (e) {
       if (e.message !== "Resolution timeout") {
         console.error(`[${sessionId}] Contact resolution failed:`, e.message);
       }
-      // On failure or timeout, cache the results without the LID-based fallback phoneNumber.
-      const fallbackResolved = {
-        notifyName: fallbackName,
-        phoneNumber: null,
-      };
+      const fallbackResolved = { notifyName: fallbackName, phoneNumber: null };
       contactInfoCache.set(contactId, { ...fallbackResolved, at: now });
       return fallbackResolved;
     }
