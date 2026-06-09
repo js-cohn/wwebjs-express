@@ -19,6 +19,12 @@ const {
   MAX_DOWNLOAD_REDIRECTS,
 } = process.env;
 
+if (WEBHOOK_URL) {
+  console.log(`🔗 Webhook relay configured to: ${WEBHOOK_URL}`);
+} else {
+  console.warn("⚠️ WEBHOOK_URL is not set. Events will not be forwarded.");
+}
+
 // --- File Download Configuration ---
 const maxDownloadMb = Number(MAX_DOWNLOAD_MB) || 10;
 const downloadTimeoutSeconds = Number(DOWNLOAD_TIMEOUT_SECONDS) || 15;
@@ -116,9 +122,14 @@ function buildPublicFileUrl(filename) {
  */
 function postWebhook(payload, errorPrefix = "Webhook relay failed") {
   if (!WEBHOOK_URL) return;
+  const eventDesc =
+    payload.event === "message"
+      ? `message (${payload.type})`
+      : `${payload.event}.${payload.type || "unknown"}`;
+  console.log(`📡 Sending webhook: ${eventDesc}`);
   axios
     .post(WEBHOOK_URL, payload)
-    .catch((err) => console.error(`${errorPrefix}:`, err.message));
+    .catch((err) => console.error(`${errorPrefix}: ${err.message}`));
 }
 
 /**
