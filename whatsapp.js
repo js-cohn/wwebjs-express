@@ -22,6 +22,7 @@ const qrCodes = {};
 const resumeUnreadReplaySessions = new Set();
 const SESSION_STATE_TIMEOUT_MS = 2000;
 const STARTUP_DIAGNOSTICS_POLL_MS = 1000;
+const MAX_READY_TIMEOUT_MS = 300000; // 5 minutes
 const IGNORED_SYSTEM_MESSAGE_TYPES = new Set([
   "notification_template",
   "e2e_notification",
@@ -132,6 +133,11 @@ function startSession(sessionId) {
       clientId: sessionId,
       dataPath: SESSIONS_DIR,
     }),
+    webVersionCache: {
+      type: "remote",
+      remotePath:
+        "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html",
+    },
     puppeteer: {
       // Favor stable headless mode for long-running Linux servers.
       headless: true,
@@ -143,6 +149,8 @@ function startSession(sessionId) {
         "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-site-isolation-trials",
+        "--no-zygote",
       ],
     },
   });
@@ -319,37 +327,59 @@ function startSession(sessionId) {
   }
 
   // Watchdog to detect if browser startup is stuck.
-  let watchdog = setTimeout(async () => {
-    const state = await getClientStateWithTimeout(client);
-    startupState.lastState = state;
-    startupState.lastPageUrl = await getPageUrlSafe(client.pupPage);
-    if (
-      startupState.qrSeenAt &&
-      !startupState.authenticatedAt &&
-      !startupState.readyAt
-    ) {
-      startupLog(
-        "QR is available and awaiting scan; keeping session alive.",
-        null,
-        "warn",
-      );
-      return;
-    }
-    if (startupState.authenticatedAt && !startupState.readyAt) {
-      startupLog(
-        "Authenticated event received but READY has not fired yet; keeping session alive.",
-        null,
-        "warn",
-      );
-      return;
-    }
-    if (!state || state === "INITIALIZING" || state === "OFFLINE") {
-      await cleanupFailedClient({
-        reason:
-          "⚠️ Handshake hang detected while INITIALIZING. Call /web-start/:id to try again.",
-      });
-    }
-  }, 60000); // 1 minute
+  let watchdog = null;
+  const runWatchdogCheck = () => {
+    if (hasAnnouncedReady || isCleaningUp) return;
+
+    watchdog = setTimeout(async () => {
+      if (hasAnnouncedReady || isCleaningUp) return;
+
+      const state = await getClientStateWithTimeout(client);
+      startupState.lastState = state;
+      startupState.lastPageUrl = await getPageUrlSafe(client.pupPage);
+
+      const elapsed = Date.now() - startupState.startedAt;
+
+      // If we've been trying for too long without reaching READY, give up.
+      if (elapsed > MAX_READY_TIMEOUT_MS) {
+        await cleanupFailedClient({
+          reason: `⚠️ Session failed to reach READY state within ${MAX_READY_TIMEOUT_MS / 1000}s. Tearing down.`,
+        });
+        return;
+      }
+
+      if (
+        startupState.qrSeenAt &&
+        !startupState.authenticatedAt &&
+        !startupState.readyAt
+      ) {
+        startupLog(
+          "QR is available and awaiting scan; keeping session alive.",
+          null,
+          "warn",
+        );
+      } else if (startupState.authenticatedAt && !startupState.readyAt) {
+        startupLog(
+          "Authenticated event received but READY has not fired yet; keeping session alive.",
+          null,
+          "warn",
+        );
+      } else if (!state || state === "INITIALIZING" || state === "OFFLINE") {
+        if (elapsed > 60000) {
+          await cleanupFailedClient({
+            reason:
+              "⚠️ Handshake hang detected while INITIALIZING. Call /web-start/:id to try again.",
+          });
+          return;
+        }
+      }
+
+      runWatchdogCheck();
+    }, 30000); // Check every 30s
+    watchdog.unref?.();
+  };
+
+  runWatchdogCheck();
 
   // --- Client Event Handlers ---
 
