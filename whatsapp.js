@@ -524,71 +524,47 @@ function startSession(sessionId) {
   async function getContactPhoneNumber(contact, fromId) {
     if (!contact) return null;
 
-    const isLid =
-      contact.id?.server === "lid" || String(fromId).endsWith("@lid");
-    const lidUser = isLid
-      ? contact.id?.user || String(fromId).split("@")[0]
+    // 1. If the contact is already resolved to a phone number ID, use it immediately.
+    if (contact.id?.server === "c.us") return contact.id.user;
+
+    // 2. Identify the LID numeric parts we must avoid.
+    const lid = contact.id?.server === "lid" ? contact.id.user : null;
+    const fromLid = String(fromId).endsWith("@lid")
+      ? String(fromId).split("@")[0]
       : null;
 
-    if (isLid) {
-      console.log(`[DEBUG-LID] Processing LID contact: ${fromId}`);
-      console.log(`[DEBUG-LID] lidUser: ${lidUser}`);
+    if (lid || fromLid) {
+      console.log(`[DEBUG-LID] Resolving LID: from=${fromLid}, contact=${lid}`);
     }
 
-    const directCandidates = [
-      contact.number,
-      contact.id?.user,
-      contact.phoneNumber,
-    ];
-
-    for (const candidate of directCandidates) {
-      const parsed = normalizePhoneNumber(candidate);
-      if (parsed) {
-        if (isLid && parsed === lidUser) {
-          console.log(
-            `[DEBUG-LID] Skipping candidate ${candidate} because it matches lidUser`,
-          );
-          continue;
-        }
-        if (isLid) {
-          console.log(
-            `[DEBUG-LID] Found non-LID candidate: ${parsed} (from ${candidate})`,
-          );
-        }
+    // 3. Check fields that often contain the real phone number.
+    // If a field is numeric and doesn't match the LID, it's our winner.
+    const candidates = [contact.number, contact.phoneNumber];
+    for (const c of candidates) {
+      const parsed = normalizePhoneNumber(c);
+      if (parsed && parsed !== lid && parsed !== fromLid) {
+        if (lid || fromLid)
+          console.log(`[DEBUG-LID] Found number in field: ${parsed}`);
         return parsed;
       }
     }
 
-    // For LID contacts, try to get the linked phone number via getFormattedNumber.
+    // 4. Fallback to the formatted number (often "linked" in the background).
     try {
       const formatted = await contact.getFormattedNumber();
       const parsed = normalizePhoneNumber(formatted);
-      if (parsed) {
-        if (isLid && parsed === lidUser) {
-          console.log(
-            `[DEBUG-LID] Skipping formatted number ${formatted} because it matches lidUser`,
-          );
-        } else {
-          if (isLid)
-            console.log(`[DEBUG-LID] Found formatted candidate: ${parsed}`);
-          return parsed;
-        }
+      if (parsed && parsed !== lid && parsed !== fromLid) {
+        if (lid || fromLid)
+          console.log(`[DEBUG-LID] Found number in formatted: ${parsed}`);
+        return parsed;
       }
     } catch (e) {
-      if (isLid)
+      if (lid || fromLid)
         console.log(`[DEBUG-LID] getFormattedNumber failed: ${e.message}`);
     }
 
-    const idCandidates = [contact.id?._serialized, fromId];
-    for (const candidate of idCandidates) {
-      const parsed = getNumberFromSerializedId(candidate);
-      if (parsed) {
-        if (isLid) console.log(`[DEBUG-LID] Found ID candidate: ${parsed}`);
-        return parsed;
-      }
-    }
-
-    if (isLid) console.log(`[DEBUG-LID] No real phone number found for LID`);
+    if (lid || fromLid)
+      console.log(`[DEBUG-LID] No real phone number found for LID`);
     return null;
   }
 
