@@ -2,6 +2,7 @@ const express = require("express");
 const qrcode = require("qrcode");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const {
   startSession,
   stopSession,
@@ -25,6 +26,89 @@ const WEB_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const WEB_RATE_LIMIT_MAX = 50;
 const SEND_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const SEND_RATE_LIMIT_MAX = 1000;
+const API_KEY = process.env.API_KEY;
+const BASIC_AUTH_USER = process.env.BASIC_AUTH_USER;
+const BASIC_AUTH_PASS = process.env.BASIC_AUTH_PASS;
+
+function constantTimeEqual(a, b) {
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
+
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+function requireApiKey(req, res, next) {
+  if (!API_KEY) {
+    return res.status(500).json({ error: "API key not configured" });
+  }
+
+  const provided = req.get("X-API-Key");
+  if (!provided || !constantTimeEqual(provided, API_KEY)) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  next();
+}
+
+function requireBasicAuth(req, res, next) {
+  // Optional app-level Basic Auth. Caddy remains primary.
+  // Set BASIC_AUTH_PASS only if you want Express to enforce it too.
+  if (!BASIC_AUTH_USER || !BASIC_AUTH_PASS) return next();
+
+  const header = req.get("Authorization") || "";
+  const match = header.match(/^Basic\s+(.+)$/i);
+  if (!match) {
+    res.set("WWW-Authenticate", 'Basic realm="wwebjs-express"');
+    return res.status(401).send("Unauthorized");
+  }
+
+  let decoded = "";
+  try {
+    decoded = Buffer.from(match[1], "base64").toString("utf8");
+  } catch {
+    res.set("WWW-Authenticate", 'Basic realm="wwebjs-express"');
+    return res.status(401).send("Unauthorized");
+  }
+
+  const separatorIndex = decoded.indexOf(":");
+  const user = separatorIndex >= 0 ? decoded.slice(0, separatorIndex) : "";
+  const pass = separatorIndex >= 0 ? decoded.slice(separatorIndex + 1) : "";
+
+  if (
+    !constantTimeEqual(user, BASIC_AUTH_USER) ||
+    !constantTimeEqual(pass, BASIC_AUTH_PASS)
+  ) {
+    res.set("WWW-Authenticate", 'Basic realm="wwebjs-express"');
+    return res.status(401).send("Unauthorized");
+  }
+
+  next();
+}
+
+function isValidSessionId(value) {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value);
+}
+
+function isValidQuotedMessageId(value) {
+  return (
+    typeof value === "string" &&
+    /^(true|false)_[^_\s]+@(c\.us|s\.whatsapp\.net|lid|g\.us)_[A-Za-z0-9._:-]+$/.test(
+      value,
+    )
+  );
+}
+
+function validateOptionalMessageRe(messageRe) {
+  if (messageRe == null) return null;
+  if (typeof messageRe !== "string" || !messageRe.trim()) {
+    return "Invalid messageRe";
+  }
+  if (!isValidQuotedMessageId(messageRe.trim())) {
+    return "Invalid messageRe";
+  }
+  return null;
+}
 
 /**
  * Lightweight in-memory sliding-window rate limiter.
@@ -88,7 +172,9 @@ const sendRateLimiter = createRateLimiter({
 });
 
 router.use(/^\/web-/, webRateLimiter);
+router.use(/^\/web-/, requireBasicAuth);
 router.use(/^\/send-/, sendRateLimiter);
+router.use(/^\/send-/, requireApiKey);
 
 /**
  * Escapes user-controlled text before embedding into HTML responses.
@@ -99,9 +185,13 @@ function escapeHtml(value) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
+    .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+router.get("/healthz", (_req, res) => {
+  res.json({ ok: true });
+});
 
 /**
  * --- Management Endpoint ---
@@ -112,6 +202,9 @@ function escapeHtml(value) {
  */
 router.get("/web-start/:id", (req, res) => {
   const sessionId = req.params.id;
+  if (!isValidSessionId(sessionId)) {
+    return res.status(400).send("Invalid session id");
+  }
   if (getSession(sessionId)) {
     return res.send(`Session ${sessionId} is already running.`);
   }
@@ -129,6 +222,9 @@ router.get("/web-start/:id", (req, res) => {
  */
 async function handlePauseSession(req, res) {
   const sessionId = req.params.id;
+  if (!isValidSessionId(sessionId)) {
+    return res.status(400).send("Invalid session id");
+  }
   const stopped = await stopSession(sessionId);
   if (stopped) {
     res.send(`Session ${sessionId} has been paused.`);
@@ -150,6 +246,9 @@ router.get("/web-pause/:id", handlePauseSession);
  */
 router.get("/web-image/:id", async (req, res) => {
   const sessionId = req.params.id;
+  if (!isValidSessionId(sessionId)) {
+    return res.status(400).send("Invalid session id");
+  }
   const safeSessionId = escapeHtml(sessionId);
   const client = getSession(sessionId);
   if (!client) {
@@ -205,7 +304,7 @@ router.get("/web-stats", async (req, res) => {
  */
 router.post("/send-text", async (req, res) => {
   const { session, to, text, messageRe } = req.body || {};
-  if (typeof session !== "string" || !session.trim()) {
+  if (typeof session !== "string" || !isValidSessionId(session.trim())) {
     return res.status(400).json({ error: "Invalid session" });
   }
   if (typeof to !== "string" || !to.trim()) {
@@ -214,11 +313,9 @@ router.post("/send-text", async (req, res) => {
   if (typeof text !== "string" || !text.trim()) {
     return res.status(400).json({ error: "Invalid text body" });
   }
-  if (
-    messageRe != null &&
-    (typeof messageRe !== "string" || !messageRe.trim())
-  ) {
-    return res.status(400).json({ error: "Invalid messageRe" });
+  const messageReError = validateOptionalMessageRe(messageRe);
+  if (messageReError) {
+    return res.status(400).json({ error: messageReError });
   }
 
   const sessionId = session.trim();
@@ -234,6 +331,9 @@ router.post("/send-text", async (req, res) => {
     const message = e.message || "Failed to send message";
     if (message === "Invalid destination") {
       return res.status(400).json({ error: "Invalid destination" });
+    }
+    if (message === "Reply message does not belong to destination") {
+      return res.status(400).json({ error: message });
     }
     res
       .status(message === "Session not active" ? 404 : 500)
@@ -255,7 +355,7 @@ router.post("/send-text", async (req, res) => {
  */
 router.post("/send-file", async (req, res) => {
   const { session, to, url, filename, caption, messageRe } = req.body || {};
-  if (typeof session !== "string" || !session.trim()) {
+  if (typeof session !== "string" || !isValidSessionId(session.trim())) {
     return res.status(400).json({ error: "Invalid session" });
   }
   const sessionId = session.trim();
@@ -266,11 +366,9 @@ router.post("/send-file", async (req, res) => {
     return res.status(400).json({ error: "Invalid file URL" });
   if (!to || typeof to !== "string" || !to.trim())
     return res.status(400).json({ error: "Invalid destination" });
-  if (
-    messageRe != null &&
-    (typeof messageRe !== "string" || !messageRe.trim())
-  ) {
-    return res.status(400).json({ error: "Invalid messageRe" });
+  const messageReError = validateOptionalMessageRe(messageRe);
+  if (messageReError) {
+    return res.status(400).json({ error: messageReError });
   }
   const recipient = to.trim();
   const messageReplyId = messageRe?.trim() || undefined;
@@ -316,6 +414,9 @@ router.post("/send-file", async (req, res) => {
 
     res.json({ success: true, local_file: safeFilename });
   } catch (e) {
+    if (e.message === "Reply message does not belong to destination") {
+      return res.status(400).json({ error: e.message });
+    }
     const result = classifySendFileError(e);
     res.status(result.status).json({ error: result.error });
   }
