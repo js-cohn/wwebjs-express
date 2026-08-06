@@ -57,6 +57,10 @@ Minimum values you should set:
 - `WHISPER_MODEL` (optional, defaults to `base`)
 - `WHISPER_TIMEOUT_SECONDS` (optional, defaults to `480`)
 
+Optional defense-in-depth value:
+
+- `BASIC_AUTH_PASS`: plaintext Express fallback password for `/web-*`. Leave empty to rely on Caddy Basic Auth only.
+
 5. Pull/start the API:
 
 ```bash
@@ -132,6 +136,8 @@ curl -X POST "https://$DOMAIN/send-text" \
   -d '{"session":"'"$SESSION"'","to":"15551234567","text":"Hello from API","messageRe":"false_1234567890@c.us_ABCDEF1234567890"}'
 ```
 
+`messageRe` must be the exact `messageId` received from this service's webhook for the same destination chat. It may contain `@c.us`, `@s.whatsapp.net`, `@lid`, or `@g.us`. The API rejects malformed reply IDs and reply IDs that do not match the selected destination candidate.
+
 5. Send file by URL:
 
 ```bash
@@ -154,10 +160,17 @@ curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
 curl -I "https://$DOMAIN/files/<filename_from_webhook_or_send_file_response>"
 ```
 
+8. Health check:
+
+```bash
+curl -i "https://$DOMAIN/healthz"
+```
+
 ### Endpoint Reference
 
 | Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
+| `/healthz` | `GET` | None | Health check |
 | `/web-start/:id` | `GET` | Basic Auth | Start/init or resume saved session |
 | `/web-pause/:id` | `GET` | Basic Auth | Pause client (keeps auth) |
 | `/web-image/:id` | `GET` | Basic Auth | QR or live screenshot |
@@ -178,12 +191,23 @@ Incoming events are POSTed to `WEBHOOK_URL`.
   "session": "your_session_name",
   "messageId": "false_15551234567@c.us_ABCDEF1234567890",
   "from": "15551234567@c.us",
+  "fromType": "phone",
+  "resolvedFrom": "15551234567@c.us",
+  "resolvedFromType": "phone",
   "body": "Hello",
   "type": "chat",
   "notifyName": "John",
-  "phoneNumber": "15551234567"
+  "phoneNumber": "15551234567",
+  "contact": {
+    "id": "15551234567@c.us",
+    "idType": "phone",
+    "notifyName": "John",
+    "phoneNumber": "15551234567"
+  }
 }
 ```
+
+For LID-originated messages, `phoneNumber` may be `null`; use `from`, `fromType`, `resolvedFrom`, and `contact.id` as the stable WhatsApp identity fields.
 
 ### 2) Incoming media message
 
@@ -193,10 +217,19 @@ Incoming events are POSTed to `WEBHOOK_URL`.
   "session": "your_session_name",
   "messageId": "false_15551234567@c.us_ABCDEF1234567890",
   "from": "15551234567@c.us",
+  "fromType": "phone",
+  "resolvedFrom": "15551234567@c.us",
+  "resolvedFromType": "phone",
   "body": "filename.pdf",
   "type": "document",
   "notifyName": "John",
   "phoneNumber": "15551234567",
+  "contact": {
+    "id": "15551234567@c.us",
+    "idType": "phone",
+    "notifyName": "John",
+    "phoneNumber": "15551234567"
+  },
   "media": {
     "url": "https://domain.example.com/files/1772577946996_filename.pdf",
     "mimetype": "application/pdf",
@@ -212,10 +245,17 @@ Incoming events are POSTed to `WEBHOOK_URL`.
   "event": "message",
   "session": "your_session_name",
   "from": "15551234567@c.us",
+  "fromType": "phone",
   "body": "👍",
   "type": "reaction",
   "notifyName": "John",
-  "phoneNumber": "15551234567"
+  "phoneNumber": "15551234567",
+  "contact": {
+    "id": "15551234567@c.us",
+    "idType": "phone",
+    "notifyName": "John",
+    "phoneNumber": "15551234567"
+  }
 }
 ```
 
@@ -241,6 +281,7 @@ Session `type` values:
 Additional webhook behavior:
 
 - `notifyName` and `phoneNumber` are best-effort and may be `null`.
+- `fromType`, `resolvedFromType`, and `contact.idType` classify WhatsApp IDs as `phone`, `lid`, `group`, or `unknown`.
 - `messageId` can be passed back as `messageRe` in `POST /send-text` or `POST /send-file` to send a WhatsApp reply in the same chat.
 - Reactions are de-duplicated before webhook delivery.
 - `audio` / `ptt` messages use whisper.cpp transcription; no speech becomes `[Inaudible Audio]`.
