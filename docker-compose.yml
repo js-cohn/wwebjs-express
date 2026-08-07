@@ -18,3 +18,7 @@ services:
     volumes:
       - ${WWEBJS_ROOT:-.}/sessions:/app/sessions
       - ${WWEBJS_ROOT:-.}/files:/app/files
+      - ${WWEBJS_ROOT:-.}/index.js:/app/index.js
+      - ${WWEBJS_ROOT:-.}/routes.js:/app/routes.js
+      - ${WWEBJS_ROOT:-.}/utils.js:/app/utils.js
+      - ${WWEBJS_ROOT:-.}/whatsapp.js:/app/whatsapp.js

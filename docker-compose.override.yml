@@ -1,5 +1,5 @@
 services:
-  wwebjs-api:
+  wwebjs-express:
     volumes:
       - ${WWEBJS_ROOT:-.}/index.js:/app/index.js
       - ${WWEBJS_ROOT:-.}/routes.js:/app/routes.js

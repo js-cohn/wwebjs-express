@@ -705,6 +705,25 @@ function startSession(sessionId) {
       ...extraPayload,
     };
 
+    if (msg.hasQuotedMsg) {
+      let quotedId = msg._data?.quotedMsg?.id?._serialized || null;
+      try {
+        const quotedMsg = await msg.getQuotedMessage();
+        if (quotedMsg && quotedMsg.id) {
+          quotedId = quotedMsg.id._serialized || quotedId;
+        }
+      } catch (quotedError) {
+        console.warn(
+          `[${sessionId}] Failed to fetch quoted message:`,
+          quotedError.message,
+        );
+      }
+      if (quotedId) {
+        payload.quotedMessageId = quotedId;
+        payload.messageRe = quotedId;
+      }
+    }
+
     const downloadableTypes = [
       "image",
       "video",

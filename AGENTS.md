@@ -27,6 +27,8 @@
   - **LID Phone Number Fix (Improved June 10, 2026):** Simplified `getContactPhoneNumber` to use an early-return pattern. It first checks if the contact ID is already resolved to a phone number (`@c.us`). If not, it explicitly skips the numeric parts of known LIDs (from `fromId` and `contact.id`) while checking `contact.number`, `contact.phoneNumber`, and `getFormattedNumber()`. This is more robust and direct than previous iterations.
 
 - **Media Handling:** Incoming `ptt` (voice notes) and `audio` are automatically transcribed using Whisper.cpp before being forwarded to the webhook.
+- **Quoted Messages Resolution (August 2026):** Webhook payloads for incoming messages resolve quoted message references (via `msg.getQuotedMessage()` and fallback checking `msg._data.quotedMsg.id._serialized`) and append them as `quotedMessageId` and `messageRe`.
+- **Docker Compose Volumes (August 2026):** Mismatched service names in the override file were corrected, and JS source files were bind-mounted inside the main `docker-compose.yml` to ensure local code execution.
 
 ## API Endpoints
 - `GET /web-start/:id`: Initializes/Resumes a session.
@@ -36,10 +38,11 @@
 - `POST /send-text`: Sends a text message (supports quoting).
 - `POST /send-file`: Downloads a file from a URL and sends it as a WhatsApp document.
 
-## Recent Context & Status (June 10, 2026)
-- **Resolved:** A regression in LID-to-PhoneNumber resolution was fixed. The logic now correctly distinguishes between the LID numeric part and the resolved phone number, ensuring the `phoneNumber` field in webhooks contains the actual MSISDN when available.
-- **Current State:** The system is stable. All core stability fixes are in place. LID resolution is working correctly as verified by log analysis.
-- **Agent Protocol Active:** This file was updated following the LID resolution fix.
+## Recent Context & Status (August 7, 2026)
+- **Resolved:** Mismatched service name in `docker-compose.override.yml` (`wwebjs-api` -> `wwebjs-express`) which was preventing local source bind-mounts.
+- **Feature Implemented:** Support for forwarding incoming reply/quote message IDs to the webhook.
+- **Current State:** The system is fully stable. The `atc2606` session is authenticated, connected, and active. Webhook notifications are successfully delivered to Webhook.site as verified by log checks.
+- **Agent Protocol Active:** This file was updated following the compose fix and quote resolution implementation.
 
 ## Future Goals / Roadmap
 - Monitor for `aquire-persistent-storage-denied` errors to further refine Puppeteer arguments.
