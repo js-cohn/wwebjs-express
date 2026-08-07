@@ -21,7 +21,7 @@
 - **Session Lifecycle:** Managed in `wwebjs-express/whatsapp.js`.
 - **Stability Fixes (Applied June 2026):**
   - **Robust Watchdog:** A recurring watchdog with a 5-minute strict timeout for the `READY` event to prevent "zombie" authenticated-but-connected sessions.
-  - **Web Version Locking:** Uses `webVersionCache` with a remote path to a known-stable WhatsApp Web version (`2.2412.54`).
+  - **Web Version Cache:** Uses `webVersionCache` with a dynamic remote template (`{version}.html`) to automatically resolve versions compatible with the current `whatsapp-web.js` release.
   - **Docker Stability:** Puppeteer launched with `--disable-site-isolation-trials` and `--no-zygote` to prevent storage persistence hangs.
   - **Enhanced Webhook Diagnostics:** `postWebhook` now logs explicit success (HTTP status) and detailed failure reasons (status codes + response body) to help diagnose silent delivery failures.
   - **LID Phone Number Fix (Improved June 10, 2026):** Simplified `getContactPhoneNumber` to use an early-return pattern. It first checks if the contact ID is already resolved to a phone number (`@c.us`). If not, it explicitly skips the numeric parts of known LIDs (from `fromId` and `contact.id`) while checking `contact.number`, `contact.phoneNumber`, and `getFormattedNumber()`. This is more robust and direct than previous iterations.
@@ -40,9 +40,10 @@
 
 ## Recent Context & Status (August 7, 2026)
 - **Resolved:** Mismatched service name in `docker-compose.override.yml` (`wwebjs-api` -> `wwebjs-express`) which was preventing local source bind-mounts.
-- **Feature Implemented:** Support for forwarding incoming reply/quote message IDs to the webhook.
+- **Fixed:** Updated `webVersionCache` to use a dynamic `{version}.html` template to resolve WhatsApp Web connection drops and `downloadMedia()` evaluation errors.
+- **Feature Implemented:** Support for forwarding incoming reply/quote message IDs (as `messageRe`) to the webhook.
 - **Current State:** The system is fully stable. The `atc2606` session is authenticated, connected, and active. Webhook notifications are successfully delivered to Webhook.site as verified by log checks.
-- **Agent Protocol Active:** This file was updated following the compose fix and quote resolution implementation.
+- **Agent Protocol Active:** This file was updated following the compose fix, version caching update, and quote resolution implementation.
 
 ## Future Goals / Roadmap
 - Monitor for `aquire-persistent-storage-denied` errors to further refine Puppeteer arguments.

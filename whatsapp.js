@@ -136,7 +136,8 @@ function startSession(sessionId) {
     webVersionCache: {
       type: "remote",
       remotePath:
-        "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html",
+        "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html",
+      strict: false,
     },
     puppeteer: {
       // Favor stable headless mode for long-running Linux servers.
