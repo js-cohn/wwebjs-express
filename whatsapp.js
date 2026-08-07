@@ -719,7 +719,6 @@ function startSession(sessionId) {
         );
       }
       if (quotedId) {
-        payload.quotedMessageId = quotedId;
         payload.messageRe = quotedId;
       }
     }

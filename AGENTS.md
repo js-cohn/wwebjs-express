@@ -27,7 +27,7 @@
   - **LID Phone Number Fix (Improved June 10, 2026):** Simplified `getContactPhoneNumber` to use an early-return pattern. It first checks if the contact ID is already resolved to a phone number (`@c.us`). If not, it explicitly skips the numeric parts of known LIDs (from `fromId` and `contact.id`) while checking `contact.number`, `contact.phoneNumber`, and `getFormattedNumber()`. This is more robust and direct than previous iterations.
 
 - **Media Handling:** Incoming `ptt` (voice notes) and `audio` are automatically transcribed using Whisper.cpp before being forwarded to the webhook.
-- **Quoted Messages Resolution (August 2026):** Webhook payloads for incoming messages resolve quoted message references (via `msg.getQuotedMessage()` and fallback checking `msg._data.quotedMsg.id._serialized`) and append them as `quotedMessageId` and `messageRe`.
+- **Quoted Messages Resolution (August 2026):** Webhook payloads for incoming messages resolve quoted message references (via `msg.getQuotedMessage()` and fallback checking `msg._data.quotedMsg.id._serialized`) and append them as `messageRe`.
 - **Docker Compose Volumes (August 2026):** Mismatched service names in the override file were corrected, and JS source files were bind-mounted inside the main `docker-compose.yml` to ensure local code execution.
 
 ## API Endpoints
