@@ -40,10 +40,9 @@
 
 ## Recent Context & Status (August 7, 2026)
 - **Resolved:** Mismatched service name in `docker-compose.override.yml` (`wwebjs-api` -> `wwebjs-express`) which was preventing local source bind-mounts.
-- **Fixed:** Updated `webVersionCache` to use a dynamic `{version}.html` template to resolve WhatsApp Web connection drops and `downloadMedia()` evaluation errors.
-- **Feature Implemented:** Support for forwarding incoming reply/quote message IDs (as `messageRe`) to the webhook.
-- **Current State:** The system is fully stable. The `atc2606` session is authenticated, connected, and active. Webhook notifications are successfully delivered to Webhook.site as verified by log checks.
-- **Agent Protocol Active:** This file was updated following the compose fix, version caching update, and quote resolution implementation.
+- **Fixed:** Resolved the issue where file links/media downloads were not being forwarded to the webhook.site URL because WhatsApp Web's mid-2026 update renamed the internal serialized-id getter `_serialized` to `$1`, causing `downloadMedia()` to fail with the opaque `r: r` error. Implemented a runtime hotfix in `whatsapp.js` that automatically applies the community patch (PR #201850) to the vendor library inside the container at startup.
+- **Current State:** The system is fully stable. The `atc2606` session is authenticated, connected, and active. Webhook notifications, including media files and transcriptions, are successfully delivered to Webhook.site as verified by log checks.
+- **Agent Protocol Active:** This file was updated following the `_serialized` to `$1` rename patch implementation.
 
 ## Future Goals / Roadmap
 - Monitor for `aquire-persistent-storage-denied` errors to further refine Puppeteer arguments.
